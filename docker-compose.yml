@@ -1,12 +1,48 @@
-version: '3'
+version: '3.8'
 
 services:
-  github-hf-dataset-creator:
-    build: .
+  # Backend API service
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
     volumes:
-      - ./data:/data
-    stdin_open: true  # Keep STDIN open for interactive TUI
-    tty: true         # Allocate a pseudo-TTY for the TUI
+      - ./backend:/app
+      - backend_data:/app/data
     environment:
-      - GITHUB_TOKEN=${GITHUB_TOKEN}
-      - HUGGINGFACE_TOKEN=${HUGGINGFACE_TOKEN}
+      - NODE_ENV=production
+      - PORT=8080
+      - HUGGINGFACE_TOKEN=${HUGGINGFACE_TOKEN:-}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - NEO4J_URI=${NEO4J_URI:-bolt://localhost:7687}
+      - NEO4J_USER=${NEO4J_USER:-neo4j}
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD:-}
+    networks:
+      - serper-network
+
+  # Frontend web application
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend/public:/app/public
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL=http://api:8080/api
+    depends_on:
+      - api
+    networks:
+      - serper-network
+
+networks:
+  serper-network:
+    driver: bridge
+
+volumes:
+  backend_data:

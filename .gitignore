@@ -1,3 +1,4 @@
+@ -1,179 +0,0 @@
 CLAUDE/
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -173,7 +174,4 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
-,env
-/IMPLEMENTATION_GUIDE
-/FOR_CLAUDE
-/CLAUDES_REF
+.env
