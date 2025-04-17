@@ -10,7 +10,7 @@ from config.credentials_manager import CredentialsManager
 from huggingface.dataset_manager import DatasetManager
 from utils.task_tracker import TaskTracker
 from utils.task_scheduler import TaskScheduler
-from api.server import start_server, stop_server, is_server_running, get_server_info
+from api.server import start_server, stop_server, is_server_running, get_server_info, start_server_with_ui
 from threading import Event, current_thread
 
 # Global cancellation event for stopping ongoing tasks
@@ -59,14 +59,16 @@ def run_cli():
         if resumable_tasks:
             print("5. Resume Scraping Task")
             print("6. Scheduled Tasks & Automation")
+            print("7. Launch Web UI")
+            print("8. Configuration")
+            print("9. Exit")
+            max_choice = 9
+        else:
+            print("5. Scheduled Tasks & Automation")
+            print("6. Launch Web UI")
             print("7. Configuration")
             print("8. Exit")
             max_choice = 8
-        else:
-            print("5. Scheduled Tasks & Automation")
-            print("6. Configuration")
-            print("7. Exit")
-            max_choice = 7
         
         choice = input(f"\nEnter your choice (1-{max_choice}): ")
         
@@ -1071,8 +1073,41 @@ def run_cli():
                 print(f"\nError managing scheduled tasks: {e}")
                 logging.error(f"Error in scheduled tasks menu: {e}")
         
-        # Configuration menu (position depends on whether Resume Dataset Creation is available)
+        # Web UI menu (position depends on whether Resume Dataset Creation is available)
         elif (choice == "6" and not resumable_tasks) or (choice == "7" and resumable_tasks):
+            print("\n----- Launch Web UI -----")
+            
+            # Check if server is already running
+            if is_server_running():
+                server_info = get_server_info()
+                print(f"Server is already running.")
+                
+                # Ask if user wants to re-launch with web UI
+                relaunch = input("Do you want to stop the current server and relaunch with web UI? (y/n): ")
+                if relaunch.lower() == 'y':
+                    print("Stopping current server...")
+                    stop_server()
+                    # Launch web UI
+                    if run_web_ui():
+                        # Return to menu
+                        continue
+                    else:
+                        print("Failed to start web UI")
+                else:
+                    print("Continuing with current server")
+            else:
+                # Launch web UI
+                if run_web_ui():
+                    # Ask if user wants to continue in CLI mode
+                    cli_continue = input("\nWeb UI is now running. Do you want to continue in CLI mode? (y/n): ")
+                    if cli_continue.lower() != 'y':
+                        print("Exiting CLI mode. The web UI will continue running in the background.")
+                        break
+                else:
+                    print("Failed to start web UI")
+        
+        # Configuration menu (position depends on whether Resume Dataset Creation is available)
+        elif (choice == "7" and not resumable_tasks) or (choice == "8" and resumable_tasks):
             print("\n----- Configuration -----")
             print("1. Setup Wizard (Guided Configuration)")
             print("2. API Credentials")
@@ -1490,7 +1525,7 @@ def run_cli():
                 print("Invalid choice")
                 
         # Exit application (position depends on whether Resume Dataset Creation is available)
-        elif (choice == "7" and not resumable_tasks) or (choice == "8" and resumable_tasks):
+        elif (choice == "8" and not resumable_tasks) or (choice == "9" and resumable_tasks):
             # Check if the server is running before exiting
             if is_server_running():
                 print("\nStopping OpenAPI Endpoints before exiting...")
@@ -1669,6 +1704,33 @@ def clean_shutdown():
     
     print("\nApplication has been shut down.")
 
+def run_web_ui():
+    """Run the web UI interface."""
+    
+    # Initialize credentials and other required components
+    credentials_manager = CredentialsManager()
+    port = credentials_manager.get_server_port()
+    
+    # Get OpenAPI key
+    api_key = credentials_manager.get_openapi_key()
+    
+    if not api_key:
+        print("\nOpenAPI key not configured. Setting temporary key for this session.")
+        api_key = "temporary_key_" + str(time.time())
+    
+    # Start server with UI enabled
+    print(f"\nStarting web UI on port {port}...")
+    server_info = start_server_with_ui(api_key, port=port)
+    
+    if server_info:
+        print(f"Web UI running at: {server_info['web_ui_url']}")
+        print(f"Chat Interface available at: {server_info['chat_url']}")
+        print(f"API Documentation: {server_info['api_docs_url']}")
+        return True
+    else:
+        print("Failed to start web UI")
+        return False
+
 def main():
     """Main entry point for the application."""
     setup_logging()
@@ -1687,6 +1749,9 @@ def main():
     update_parser.add_argument("--recursive", action="store_true", help="Recursively crawl all linked pages")
     update_parser.add_argument("--task-id", help="Task ID for tracking")
     
+    # Web UI command
+    web_ui_parser = subparsers.add_parser("web", help="Start the web UI")
+    
     # Parse arguments
     args = parser.parse_args()
     
@@ -1696,6 +1761,16 @@ def main():
             result = run_update(args)
             clean_shutdown()
             return result
+        elif args.command == "web":
+            # Run the web UI
+            run_web_ui()
+            
+            # Keep the main thread alive to handle signals properly
+            while not getattr(current_thread(), 'exit_requested', False):
+                time.sleep(1)
+                
+            clean_shutdown()
+            return 0
         else:
             # No command or unknown command, run interactive CLI
             run_cli()

@@ -10,6 +10,7 @@ A versatile web scraping and documentation processing tool for creating datasets
 - **Dataset Creation**: Generate Hugging Face datasets for AI model training
 - **Multiple Knowledge Graphs**: Create and manage separate knowledge graphs for different domains
 - **OpenAPI Integration**: Access all functionality through a RESTful API
+- **Web UI with Chat Interface**: Interact with the application using natural language through a responsive web interface
 
 ## Requirements
 
@@ -33,6 +34,22 @@ pip install -r requirements.txt
 3. (Optional) Install Playwright browsers:
 ```bash
 playwright install
+```
+
+4. For the web UI functionality, install frontend dependencies:
+```bash
+# Create static directories if they don't exist
+mkdir -p web/static/css web/static/js
+
+# Download Bootstrap CSS and JS
+curl -o web/static/css/bootstrap.min.css https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css
+curl -o web/static/js/bootstrap.bundle.min.js https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js
+
+# Download jQuery
+curl -o web/static/js/jquery-3.6.0.min.js https://code.jquery.com/jquery-3.6.0.min.js
+
+# Download Chart.js for dashboard visualizations
+curl -o web/static/js/chart.min.js https://cdn.jsdelivr.net/npm/chart.js@3.7.1/dist/chart.min.js
 ```
 
 4. (Optional) Start Neo4j database:
@@ -66,10 +83,24 @@ The interactive CLI provides options for:
 
 Start the API server with:
 ```bash
-python main.py server start
+python main.py
 ```
 
-Or through the CLI menu.
+Then select "Start OpenAPI Endpoints" from the CLI menu.
+
+### Web UI with Chat Interface
+
+Start the web UI with:
+```bash
+python main.py web
+```
+
+The web UI provides:
+- Dashboard with system status and recent tasks
+- Chat interface for natural language interaction
+- Setup wizard for configuring credentials and settings
+
+You can also launch the web UI from the CLI menu by selecting "Launch Web UI".
 
 ## Use Cases
 

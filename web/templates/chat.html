@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+
+{% block title %}Serper Chat Interface{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', path='css/chat.css') }}">
+{% endblock %}
+
+{% block header %}Chat Interface{% endblock %}
+
+{% block header_buttons %}
+<div class="btn-toolbar mb-2 mb-md-0">
+    <button class="btn btn-sm btn-outline-secondary" id="clear-chat-button">
+        <i class="bi bi-trash"></i> Clear Chat
+    </button>
+    <a href="/" class="btn btn-sm btn-outline-secondary ms-2">
+        <i class="bi bi-speedometer2"></i> Dashboard
+    </a>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-9 mx-auto">
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Serper AI Assistant</h5>
+                <div class="chat-status">
+                    <span id="connection-status" class="badge bg-success">Connected</span>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <div id="chat-messages" class="chat-container">
+                    <!-- System welcome message will be added by WebSocket connection -->
+                </div>
+                <div class="chat-input-container p-3 border-top">
+                    <form id="chat-form">
+                        <div class="input-group">
+                            <input type="text" id="message-input" class="form-control" 
+                                placeholder="Ask a question or enter a command..." autocomplete="off">
+                            <button class="btn btn-primary" type="submit">
+                                <i class="bi bi-send"></i> Send
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <button class="btn btn-link p-0 text-decoration-none" type="button" data-bs-toggle="collapse" data-bs-target="#exampleCommands">
+                        Example Commands <i class="bi bi-chevron-down"></i>
+                    </button>
+                </h5>
+            </div>
+            <div id="exampleCommands" class="collapse show">
+                <div class="card-body">
+                    <p class="mb-2">Here are some example commands you can try:</p>
+                    <ul class="example-commands">
+                        <li><a href="#" class="example-command">Create a dataset from the React documentation website</a></li>
+                        <li><a href="#" class="example-command">What datasets do I have?</a></li>
+                        <li><a href="#" class="example-command">Create a dataset from the GitHub repository langchain-ai/langchain</a></li>
+                        <li><a href="#" class="example-command">Set up my Hugging Face credentials</a></li>
+                        <li><a href="#" class="example-command">Show me my recent tasks</a></li>
+                        <li><a href="#" class="example-command">Can you create a new dataset for me that has all the SDK documentation from the GitHub organisation langchain-ai?</a></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card mt-4">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <button class="btn btn-link p-0 text-decoration-none" type="button" data-bs-toggle="collapse" data-bs-target="#assistantCapabilities">
+                        Assistant Capabilities <i class="bi bi-chevron-down"></i>
+                    </button>
+                </h5>
+            </div>
+            <div id="assistantCapabilities" class="collapse">
+                <div class="card-body">
+                    <p>The Serper AI Assistant can help you with:</p>
+                    <ul>
+                        <li><strong>Dataset Creation</strong> - Create datasets from GitHub repositories or websites</li>
+                        <li><strong>Dataset Management</strong> - List, view, and delete your datasets</li>
+                        <li><strong>Task Management</strong> - View, resume, or cancel tasks</li>
+                        <li><strong>System Information</strong> - Check the status of your system, credentials, and connections</li>
+                    </ul>
+                    <p>The assistant uses AI to understand your requests and execute them using the Serper backend.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Task Progress Popup -->
+<div id="task-progress-popup" class="task-progress-popup">
+    <div class="task-progress-content">
+        <div class="task-header">
+            <h5>Task in Progress</h5>
+            <span class="task-info">Creating dataset...</span>
+        </div>
+        <div class="progress mb-3">
+            <div id="popup-progress-bar" class="progress-bar" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">0%</div>
+        </div>
+        <div class="task-status">
+            <div id="popup-status-message">Initializing task...</div>
+        </div>
+        <div class="task-actions">
+            <button id="minimize-task" class="btn btn-sm btn-outline-secondary">Minimize</button>
+            <button id="cancel-task" class="btn btn-sm btn-outline-danger">Cancel</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', path='js/chat.js') }}"></script>
+<script>
+    // Initialize chat WebSocket connection
+    document.addEventListener('DOMContentLoaded', function() {
+        initChatWebSocket('{{ websocket_url }}');
+    });
+</script>
+{% endblock %}

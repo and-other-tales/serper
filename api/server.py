@@ -4,11 +4,15 @@ import threading
 import time
 import os
 import ssl
-from fastapi import FastAPI, HTTPException, Depends, Header, Request, Response
+import uuid
+from fastapi import FastAPI, HTTPException, Depends, Header, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from fastapi.responses import HTMLResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, Field
 from typing import Dict, List, Optional, Any, Union, Callable
@@ -97,6 +101,9 @@ app = FastAPI(
     description="Scrape websites to create datasets and knowledge graphs for machine learning and data analysis",
     version="1.0.0",
 )
+
+# Initialize templates
+templates = Jinja2Templates(directory="web/templates")
 
 # Add security middlewares
 app.add_middleware(SecurityHeadersMiddleware)
@@ -623,7 +630,7 @@ def set_api_key(key):
     API_KEY = key
 
 
-def start_server(api_key, host="0.0.0.0", port=8080, use_https=False, cert_file=None, key_file=None):
+def start_server(api_key, host="0.0.0.0", port=8080, use_https=False, cert_file=None, key_file=None, with_ui=False):
     """
     Start the FastAPI server using Uvicorn with optional HTTPS support.
     
@@ -634,6 +641,7 @@ def start_server(api_key, host="0.0.0.0", port=8080, use_https=False, cert_file=
         use_https: Whether to use HTTPS
         cert_file: Path to SSL certificate file (required if use_https is True)
         key_file: Path to SSL key file (required if use_https is True)
+        with_ui: Whether to enable the web UI
         
     Returns:
         dict: Server status information or False if server couldn't be started
@@ -653,6 +661,114 @@ def start_server(api_key, host="0.0.0.0", port=8080, use_https=False, cert_file=
         if not os.path.exists(key_file):
             logger.error(f"SSL key file not found: {key_file}")
             return False
+    
+    # Mount static files and routes if UI is enabled
+    if with_ui:
+        # Mount static files
+        app.mount("/static", StaticFiles(directory="web/static"), name="static")
+        
+        # Add UI routes
+        @app.get("/", response_class=HTMLResponse)
+        async def get_dashboard(request: Request):
+            """Render the dashboard page"""
+            # Get system status data
+            from utils.task_tracker import TaskTracker
+            task_tracker = TaskTracker()
+            recent_tasks = task_tracker.list_resumable_tasks()[:5]
+            cache_size = task_tracker.get_cache_size()
+            
+            # Get credentials status
+            from config.credentials_manager import CredentialsManager
+            credentials_manager = CredentialsManager()
+            
+            # Initialize status variables
+            github_status = False
+            huggingface_status = False
+            neo4j_status = False
+            
+            # Check credentials
+            try:
+                # GitHub check
+                from github.client import GitHubClient
+                github_client = GitHubClient()
+                github_status = github_client.verify_credentials()
+            except:
+                pass
+                
+            try:
+                # Hugging Face check
+                _, huggingface_token = credentials_manager.get_huggingface_credentials()
+                huggingface_status = bool(huggingface_token)
+            except:
+                pass
+                
+            try:
+                # Neo4j check
+                from knowledge_graph.graph_store import GraphStore
+                graph_store = GraphStore()
+                neo4j_status = graph_store.test_connection()
+            except:
+                pass
+                
+            # Get server status
+            server_running = is_server_running()
+            
+            # Render dashboard
+            return templates.TemplateResponse("dashboard.html", {
+                "request": request,
+                "server_status": server_running,
+                "github_status": github_status,
+                "huggingface_status": huggingface_status,
+                "neo4j_status": neo4j_status,
+                "recent_tasks": recent_tasks,
+                "cache_size": cache_size,
+                "dataset_count": 0,  # Would need to fetch actual count
+                "server_port": port,
+                "temp_dir": credentials_manager.get_temp_dir(),
+                "active_page": "dashboard"
+            })
+        
+        @app.get("/chat", response_class=HTMLResponse)
+        async def get_chat(request: Request):
+            """Render the chat interface page"""
+            # Determine WebSocket URL
+            protocol = "wss" if use_https else "ws"
+            websocket_url = f"{protocol}://{request.headers.get('host', f'{host}:{port}')}/ws"
+            
+            return templates.TemplateResponse("chat.html", {
+                "request": request,
+                "active_page": "chat",
+                "websocket_url": websocket_url
+            })
+        
+        # Additional UI routes can be added here
+        @app.get("/tasks", response_class=HTMLResponse)
+        async def get_tasks(request: Request):
+            """Render the tasks page"""
+            # Get task data
+            from utils.task_tracker import TaskTracker
+            task_tracker = TaskTracker()
+            tasks = task_tracker.list_resumable_tasks()
+            
+            return templates.TemplateResponse("dashboard.html", {
+                "request": request,
+                "tasks": tasks,
+                "active_page": "tasks"
+            })
+        
+        @app.get("/configuration", response_class=HTMLResponse)
+        async def get_configuration(request: Request):
+            """Render the configuration page"""
+            # Get configuration data
+            from config.credentials_manager import CredentialsManager
+            credentials_manager = CredentialsManager()
+            
+            return templates.TemplateResponse("dashboard.html", {
+                "request": request,
+                "server_port": credentials_manager.get_server_port(),
+                "temp_dir": credentials_manager.get_temp_dir(),
+                "active_page": "configuration"
+            })
 
     def run_server():
         import uvicorn
@@ -671,6 +787,10 @@ def start_server(api_key, host="0.0.0.0", port=8080, use_https=False, cert_file=
             logger.info(f"OpenAPI Schema available at: https://{host}:{port}/openapi.json")
             logger.info(f"API Documentation available at: https://{host}:{port}/docs")
             
+            if with_ui:
+                logger.info(f"Web UI available at: https://{host}:{port}/")
+                logger.info(f"Chat Interface available at: https://{host}:{port}/chat")
+            
             # Run with SSL context
             uvicorn.run(
                 app, 
@@ -685,6 +805,11 @@ def start_server(api_key, host="0.0.0.0", port=8080, use_https=False, cert_file=
             logger.info(f"Starting HTTP FastAPI server on {host}:{port}")
             logger.info(f"OpenAPI Schema available at: http://{host}:{port}/openapi.json")
             logger.info(f"API Documentation available at: http://{host}:{port}/docs")
+            
+            if with_ui:
+                logger.info(f"Web UI available at: http://{host}:{port}/")
+                logger.info(f"Chat Interface available at: http://{host}:{port}/chat")
+                
             logger.warning("Running in HTTP mode. Consider using HTTPS for production deployments.")
             
             # Run without SSL
@@ -717,8 +842,29 @@ def start_server(api_key, host="0.0.0.0", port=8080, use_https=False, cert_file=
         "protocol": protocol,
         "api_docs_url": f"{protocol}://{host}:{port}/docs",
         "openapi_url": f"{protocol}://{host}:{port}/openapi.json",
-        "using_https": use_https
+        "using_https": use_https,
+        "web_ui": with_ui,
+        "web_ui_url": f"{protocol}://{host}:{port}/" if with_ui else None,
+        "chat_url": f"{protocol}://{host}:{port}/chat" if with_ui else None
     }
+
+def start_server_with_ui(api_key=None, host="0.0.0.0", port=8080, use_https=False, cert_file=None, key_file=None):
+    """
+    Start the server with web UI enabled
+    
+    Args:
+        api_key: API key for authentication
+        host: Host to bind the server to
+        port: Port to bind the server to
+        use_https: Whether to use HTTPS
+        cert_file: Path to SSL certificate file (required if use_https is True)
+        key_file: Path to SSL key file (required if use_https is True)
+        
+    Returns:
+        dict: Server status information or False if server couldn't be started
+    """
+    return start_server(api_key, host=host, port=port, use_https=use_https, 
+                        cert_file=cert_file, key_file=key_file, with_ui=True)
 
 
 def stop_server():
@@ -763,6 +909,47 @@ def get_server_info():
         "api_docs_url": f"{protocol}://{host}:{port}/docs" if server_status.running else None,
         "openapi_url": f"{protocol}://{host}:{port}/openapi.json" if server_status.running else None
     }
+
+# Chat WebSocket connection manager and handler
+chat_handler = None
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket endpoint for chat interface"""
+    global chat_handler
+    
+    # Initialize chat handler if needed
+    if chat_handler is None:
+        from config.credentials_manager import CredentialsManager
+        from web.chat_handler import ChatHandler
+        credentials_manager = CredentialsManager()
+        chat_handler = ChatHandler(credentials_manager)
+    
+    # Generate a unique client ID
+    client_id = str(uuid.uuid4())
+    
+    try:
+        # Accept connection
+        await chat_handler.connect(websocket, client_id)
+        
+        # Process messages
+        while True:
+            message = await websocket.receive_text()
+            await chat_handler.process_message(message, websocket)
+    except WebSocketDisconnect:
+        # Handle client disconnect
+        await chat_handler.disconnect(client_id)
+        logger.info(f"Client #{client_id} disconnected")
+    except Exception as e:
+        # Handle errors
+        logger.error(f"WebSocket error: {e}", exc_info=True)
+        try:
+            await websocket.close(code=1011, reason=f"Error: {str(e)}")
+        except:
+            pass
+        
+        # Clean up connection
+        await chat_handler.disconnect(client_id)
 
 
 @app.post("/crawl", response_model=ApiResponse, summary="Crawl Website")

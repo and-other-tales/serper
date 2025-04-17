@@ -1,0 +1,395 @@
+{% extends "base.html" %}
+
+{% block title %}Serper Dashboard{% endblock %}
+
+{% block header %}Dashboard{% endblock %}
+
+{% block header_buttons %}
+<div class="btn-toolbar mb-2 mb-md-0">
+    <div class="btn-group me-2">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#setupWizardModal">
+            <i class="bi bi-gear"></i> Setup Wizard
+        </button>
+    </div>
+    <a href="/chat" class="btn btn-sm btn-primary">
+        <i class="bi bi-chat"></i> Chat Interface
+    </a>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <!-- System Status Card -->
+    <div class="col-md-6 col-lg-4 mb-4">
+        <div class="card dashboard-card h-100">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">System Status</h5>
+                <a href="/configuration" class="btn btn-sm btn-outline-secondary">
+                    <i class="bi bi-gear"></i>
+                </a>
+            </div>
+            <div class="card-body">
+                <ul class="list-group list-group-flush">
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        API Server
+                        <span class="badge bg-{% if server_status %}success{% else %}danger{% endif %}">
+                            {% if server_status %}Running{% else %}Stopped{% endif %}
+                        </span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        Hugging Face
+                        <span class="badge bg-{% if huggingface_status %}success{% else %}danger{% endif %}">
+                            {% if huggingface_status %}Connected{% else %}Not Configured{% endif %}
+                        </span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        GitHub
+                        <span class="badge bg-{% if github_status %}success{% else %}danger{% endif %}">
+                            {% if github_status %}Connected{% else %}Not Configured{% endif %}
+                        </span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        Neo4j
+                        <span class="badge bg-{% if neo4j_status %}success{% else %}danger{% endif %}">
+                            {% if neo4j_status %}Connected{% else %}Not Configured{% endif %}
+                        </span>
+                    </li>
+                </ul>
+            </div>
+            <div class="card-footer">
+                <div class="d-flex justify-content-between align-items-center">
+                    <small class="text-muted">Server port: {{ server_port }}</small>
+                    <small class="text-muted">Cache: {{ cache_size }} MB</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Storage Usage Card -->
+    <div class="col-md-6 col-lg-4 mb-4">
+        <div class="card dashboard-card h-100">
+            <div class="card-header">
+                <h5 class="mb-0">Storage Usage</h5>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label class="form-label d-flex justify-content-between">
+                        Cache Storage
+                        <span>{{ cache_size }} MB</span>
+                    </label>
+                    <div class="progress">
+                        <div class="progress-bar" role="progressbar" style="width: 25%;" aria-valuenow="25" aria-valuemin="0" aria-valuemax="100">25%</div>
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label d-flex justify-content-between">
+                        Datasets
+                        <span>{{ dataset_count }} datasets</span>
+                    </label>
+                    <div class="progress">
+                        <div class="progress-bar bg-success" role="progressbar" style="width: 40%;" aria-valuenow="40" aria-valuemin="0" aria-valuemax="100">40%</div>
+                    </div>
+                </div>
+                <div>
+                    <div class="alert alert-info">
+                        <small>Storage directory: {{ temp_dir }}</small>
+                    </div>
+                </div>
+            </div>
+            <div class="card-footer">
+                <div class="d-flex justify-content-end">
+                    <button class="btn btn-sm btn-outline-secondary">
+                        <i class="bi bi-trash"></i> Clear Cache
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Actions Card -->
+    <div class="col-md-6 col-lg-4 mb-4">
+        <div class="card dashboard-card h-100">
+            <div class="card-header">
+                <h5 class="mb-0">Quick Actions</h5>
+            </div>
+            <div class="card-body d-flex flex-column">
+                <a href="/chat" class="btn btn-primary mb-2">
+                    <i class="bi bi-chat"></i> Chat Interface
+                </a>
+                <div class="btn-group mb-2">
+                    <button type="button" class="btn btn-outline-secondary">
+                        <i class="bi bi-github"></i> Create GitHub Dataset
+                    </button>
+                    <button type="button" class="btn btn-outline-secondary dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown" aria-expanded="false">
+                        <span class="visually-hidden">Toggle Dropdown</span>
+                    </button>
+                    <ul class="dropdown-menu">
+                        <li><a class="dropdown-item" href="#">From Organization</a></li>
+                        <li><a class="dropdown-item" href="#">From Repository</a></li>
+                    </ul>
+                </div>
+                <div class="btn-group mb-2">
+                    <button type="button" class="btn btn-outline-secondary">
+                        <i class="bi bi-globe"></i> Create Web Dataset
+                    </button>
+                    <button type="button" class="btn btn-outline-secondary dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown" aria-expanded="false">
+                        <span class="visually-hidden">Toggle Dropdown</span>
+                    </button>
+                    <ul class="dropdown-menu">
+                        <li><a class="dropdown-item" href="#">From URL</a></li>
+                        <li><a class="dropdown-item" href="#">From Sitemap</a></li>
+                    </ul>
+                </div>
+                <button type="button" class="btn btn-outline-secondary mb-2">
+                    <i class="bi bi-diagram-3"></i> Manage Knowledge Graphs
+                </button>
+                <button type="button" class="btn btn-outline-secondary">
+                    <i class="bi bi-calendar3"></i> Schedule Tasks
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Recent Tasks Card -->
+    <div class="col-12 mb-4">
+        <div class="card dashboard-card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Recent Tasks</h5>
+                <a href="/tasks" class="btn btn-sm btn-outline-secondary">
+                    View All
+                </a>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th scope="col">Task ID</th>
+                                <th scope="col">Type</th>
+                                <th scope="col">Description</th>
+                                <th scope="col">Progress</th>
+                                <th scope="col">Status</th>
+                                <th scope="col">Updated</th>
+                            </tr>
+                        </thead>
+                        <tbody class="task-list">
+                            {% if recent_tasks %}
+                                {% for task in recent_tasks %}
+                                <tr class="task-item" data-task-id="{{ task.id }}">
+                                    <td><code>{{ task.id[:8] }}...</code></td>
+                                    <td>{{ task.type }}</td>
+                                    <td>{{ task.description }}</td>
+                                    <td>
+                                        <div class="progress">
+                                            <div class="progress-bar {% if task.progress == 100 %}bg-success{% elif task.progress < 0 %}bg-danger{% endif %}" 
+                                                role="progressbar" 
+                                                style="width: {% if task.progress < 0 %}100{% else %}{{ task.progress }}{% endif %}%;" 
+                                                aria-valuenow="{{ task.progress }}" 
+                                                aria-valuemin="0" 
+                                                aria-valuemax="100">
+                                                {{ task.progress }}%
+                                            </div>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        {% if task.status == "completed" %}
+                                            <span class="badge bg-success">Completed</span>
+                                        {% elif task.status == "failed" %}
+                                            <span class="badge bg-danger">Failed</span>
+                                        {% elif task.status == "interrupted" %}
+                                            <span class="badge bg-warning">Interrupted</span>
+                                        {% else %}
+                                            <span class="badge bg-primary">Running</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ task.updated_ago }}</td>
+                                </tr>
+                                {% endfor %}
+                            {% else %}
+                                <tr>
+                                    <td colspan="6" class="text-center">No recent tasks</td>
+                                </tr>
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Setup Wizard Modal -->
+<div class="modal fade" id="setupWizardModal" tabindex="-1" aria-labelledby="setupWizardModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="setupWizardModalLabel">Setup Wizard</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info">
+                    This wizard will guide you through setting up your Serper application. Follow the steps below to configure the required credentials and settings.
+                </div>
+                
+                <form id="setupWizardForm">
+                    <!-- Step 1: Hugging Face Credentials -->
+                    <div class="setup-step mb-4">
+                        <h5>1. Hugging Face Credentials</h5>
+                        <p class="text-muted">Hugging Face credentials are required for dataset creation and management.</p>
+                        
+                        <div class="mb-3">
+                            <label for="hfUsername" class="form-label">Hugging Face Username</label>
+                            <input type="text" class="form-control" id="hfUsername" name="hfUsername">
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="hfToken" class="form-label">Hugging Face Token</label>
+                            <input type="password" class="form-control" id="hfToken" name="hfToken">
+                            <div class="form-text">
+                                <a href="https://huggingface.co/settings/tokens" target="_blank">Generate a token</a> with write access.
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Step 2: GitHub Token (Optional) -->
+                    <div class="setup-step mb-4">
+                        <h5>2. GitHub Token (Optional)</h5>
+                        <p class="text-muted">GitHub token provides higher API rate limits and access to private repositories.</p>
+                        
+                        <div class="mb-3">
+                            <label for="githubToken" class="form-label">GitHub Token</label>
+                            <input type="password" class="form-control" id="githubToken" name="githubToken">
+                            <div class="form-text">
+                                <a href="https://github.com/settings/tokens" target="_blank">Create a personal access token</a> with repo scope.
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Step 3: OpenAI API Key (Optional) -->
+                    <div class="setup-step mb-4">
+                        <h5>3. OpenAI API Key (Optional)</h5>
+                        <p class="text-muted">OpenAI API key is used for AI-guided web crawling and repository scraping.</p>
+                        
+                        <div class="mb-3">
+                            <label for="openaiKey" class="form-label">OpenAI API Key</label>
+                            <input type="password" class="form-control" id="openaiKey" name="openaiKey">
+                            <div class="form-text">
+                                <a href="https://platform.openai.com/account/api-keys" target="_blank">Get your API key</a> from the OpenAI dashboard.
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Step 4: Neo4j Configuration (Optional) -->
+                    <div class="setup-step mb-4">
+                        <h5>4. Neo4j Configuration (Optional)</h5>
+                        <p class="text-muted">Neo4j database is used for knowledge graph creation and querying.</p>
+                        
+                        <div class="form-check mb-3">
+                            <input class="form-check-input" type="checkbox" id="configureNeo4j" name="configureNeo4j">
+                            <label class="form-check-label" for="configureNeo4j">
+                                Configure Neo4j connection
+                            </label>
+                        </div>
+                        
+                        <div id="neo4jConfigFields" style="display: none;">
+                            <div class="mb-3">
+                                <label for="neo4jUri" class="form-label">Neo4j URI</label>
+                                <input type="text" class="form-control" id="neo4jUri" name="neo4jUri" placeholder="bolt://localhost:7687">
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label for="neo4jUser" class="form-label">Neo4j Username</label>
+                                <input type="text" class="form-control" id="neo4jUser" name="neo4jUser" placeholder="neo4j">
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label for="neo4jPassword" class="form-label">Neo4j Password</label>
+                                <input type="password" class="form-control" id="neo4jPassword" name="neo4jPassword">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Step 5: Server Configuration -->
+                    <div class="setup-step">
+                        <h5>5. Server Configuration</h5>
+                        
+                        <div class="mb-3">
+                            <label for="serverPort" class="form-label">API Server Port</label>
+                            <input type="number" class="form-control" id="serverPort" name="serverPort" placeholder="8080" min="1024" max="65535">
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="tempDir" class="form-label">Temporary Directory Path</label>
+                            <input type="text" class="form-control" id="tempDir" name="tempDir" placeholder="/tmp/serper">
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-primary" id="saveSetupBtn">Save Configuration</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Neo4j configuration toggle
+        const configureNeo4j = document.getElementById('configureNeo4j');
+        const neo4jConfigFields = document.getElementById('neo4jConfigFields');
+        
+        if (configureNeo4j && neo4jConfigFields) {
+            configureNeo4j.addEventListener('change', function() {
+                neo4jConfigFields.style.display = this.checked ? 'block' : 'none';
+            });
+        }
+        
+        // Setup wizard form submission
+        const setupWizardForm = document.getElementById('setupWizardForm');
+        const saveSetupBtn = document.getElementById('saveSetupBtn');
+        
+        if (setupWizardForm && saveSetupBtn) {
+            saveSetupBtn.addEventListener('click', function() {
+                const formData = new FormData(setupWizardForm);
+                
+                // Convert FormData to JSON
+                const formJson = {};
+                formData.forEach((value, key) => {
+                    formJson[key] = value;
+                });
+                
+                // Send configuration to server
+                fetch('/api/configuration/setup', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(formJson)
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        alert('Configuration saved successfully');
+                        // Close modal
+                        const modal = bootstrap.Modal.getInstance(document.getElementById('setupWizardModal'));
+                        modal.hide();
+                        // Reload page to reflect changes
+                        window.location.reload();
+                    } else {
+                        alert('Error saving configuration: ' + data.message);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error saving configuration:', error);
+                    alert('Error saving configuration');
+                });
+            });
+        }
+    });
+</script>
+{% endblock %}
