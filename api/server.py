@@ -725,7 +725,8 @@ def start_server(api_key, host="0.0.0.0", port=8080, use_https=False, cert_file=
                 "dataset_count": 0,  # Would need to fetch actual count
                 "server_port": port,
                 "temp_dir": credentials_manager.get_temp_dir(),
-                "active_page": "dashboard"
+                "active_page": "dashboard",
+                "messages": []  # Empty messages for template
             })
         
         @app.get("/chat", response_class=HTMLResponse)
@@ -738,7 +739,8 @@ def start_server(api_key, host="0.0.0.0", port=8080, use_https=False, cert_file=
             return templates.TemplateResponse("chat.html", {
                 "request": request,
                 "active_page": "chat",
-                "websocket_url": websocket_url
+                "websocket_url": websocket_url,
+                "messages": []  # Empty messages for template
             })
         
         # Additional UI routes can be added here
@@ -753,7 +755,8 @@ def start_server(api_key, host="0.0.0.0", port=8080, use_https=False, cert_file=
             return templates.TemplateResponse("dashboard.html", {
                 "request": request,
                 "tasks": tasks,
-                "active_page": "tasks"
+                "active_page": "tasks",
+                "messages": []  # Empty messages for template
             })
         
         @app.get("/configuration", response_class=HTMLResponse)
@@ -767,7 +770,8 @@ def start_server(api_key, host="0.0.0.0", port=8080, use_https=False, cert_file=
                 "request": request,
                 "server_port": credentials_manager.get_server_port(),
                 "temp_dir": credentials_manager.get_temp_dir(),
-                "active_page": "configuration"
+                "active_page": "configuration",
+                "messages": []  # Empty messages for template
             })
 
     def run_server():
