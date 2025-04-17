@@ -37,6 +37,8 @@ class GitHubClient:
 
     # Class-level lock for thread-safe operation
     _class_lock = threading.RLock()
+    # Add this class attribute
+    request_lock = threading.Lock()
     
     # Initialize class variables in a thread-safe way
     @classmethod
