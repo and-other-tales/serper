@@ -3,6 +3,10 @@ import re
 import atexit
 import signal
 import time
+import sys
+from pathlib import Path
+# Ensure local import takes precedence over any installed packages
+sys.path.insert(0, str(Path(__file__).parent.parent))
 from github.repository import RepositoryFetcher
 from utils.performance import async_process
 from utils.task_tracker import TaskTracker
@@ -203,20 +207,133 @@ class ContentFetcher:
                 "priority_content": []
             }
 
-    def fetch_single_repository(self, repo_url, progress_callback=None, max_files=None, user_instructions=None, use_ai_guidance=False):
-        """Fetch a single repository.
+    def fetch_single_repository(self, repo_url, progress_callback=None, max_files=None, user_instructions=None, use_ai_guidance=False, _cancellation_event=None):
+        """Fetch a single repository or all repositories from an organization.
         
         Args:
-            repo_url: URL of the repository to fetch
+            repo_url: URL of the repository or organization to fetch
             progress_callback: Function to call with progress updates
             max_files: Maximum number of files to fetch (optional limit)
             user_instructions: User's description of what to extract from the repository (for AI guidance)
             use_ai_guidance: Whether to use AI to guide the repository fetching process
+            _cancellation_event: Event that can be set to cancel the operation
             
         Returns:
             Repository content
         """
         try:
+            # Check if this is an organization URL by examining the pattern
+            is_org_url = False
+            match = re.match(r"https?://github\.com/([^/]+)/?$", repo_url)
+            if match:
+                # No second path segment - this is an organization URL
+                is_org_url = True
+                org_name = match.group(1)
+                logger.info(f"Detected GitHub organization URL: {repo_url}")
+                
+                if progress_callback:
+                    progress_callback(5, f"Fetching repositories from organization: {org_name}")
+                
+                # Fetch all repositories from the organization
+                all_content = []
+                org_repos = self.fetch_organization_repositories(org_name, progress_callback)
+                
+                if not org_repos:
+                    logger.warning(f"No repositories found for organization {org_name}")
+                    if progress_callback:
+                        progress_callback(100)
+                    return []
+                
+                logger.info(f"Found {len(org_repos)} repositories in organization {org_name}")
+                
+                # Process each repository with progress updates
+                total_repos = len(org_repos)
+                for idx, repo in enumerate(org_repos):
+                    # Check for cancellation before processing each repository
+                    if _cancellation_event and _cancellation_event.is_set():
+                        logger.info(f"Operation cancelled after processing {idx}/{total_repos} repositories")
+                        return all_content  # Return what we've processed so far
+                
+                    # Calculate progress for this repository (allocate 5-95% range for repository processing)
+                    repo_progress_start = 5 + (idx * 90 / total_repos)
+                    repo_progress_end = 5 + ((idx + 1) * 90 / total_repos)
+                    
+                    # Create a progress callback that maps to the allocated range for this repository
+                    def repo_progress_callback(percent, message=None):
+                        if progress_callback:
+                            adjusted_percent = repo_progress_start + (percent * (repo_progress_end - repo_progress_start) / 100)
+                            if message:
+                                progress_callback(adjusted_percent, f"Repository {idx+1}/{total_repos}: {message}")
+                            else:
+                                progress_callback(adjusted_percent, f"Processing repository {idx+1}/{total_repos}")
+                    
+                    owner = repo["owner"]["login"]
+                    repo_name = repo["name"]
+                    branch = repo.get("default_branch")
+                    
+                    logger.info(f"Processing repository {idx+1}/{total_repos}: {owner}/{repo_name}")
+                    repo_progress_callback(0, f"Starting {owner}/{repo_name}")
+                    
+                    # Apply AI guidance if requested
+                    ai_instructions = None
+                    if use_ai_guidance and user_instructions:
+                        repo_url_full = f"https://github.com/{owner}/{repo_name}"
+                        ai_instructions = self.get_github_instructions(user_instructions, repo_url_full)
+                        
+                        # Apply AI instructions to repository fetcher settings
+                        if ai_instructions:
+                            # Override max_files if specified by AI
+                            if "max_files" in ai_instructions and ai_instructions["max_files"] > 0:
+                                repo_max_files = ai_instructions["max_files"]
+                            else:
+                                repo_max_files = max_files
+                                
+                            # Set file patterns and directory filters on the repository fetcher
+                            self.repo_fetcher.file_patterns = ai_instructions.get("file_patterns", [])
+                            self.repo_fetcher.exclude_patterns = ai_instructions.get("exclude_patterns", [])
+                            self.repo_fetcher.include_directories = ai_instructions.get("include_directories", [])
+                            self.repo_fetcher.exclude_directories = ai_instructions.get("exclude_directories", [])
+                            self.repo_fetcher.priority_content = ai_instructions.get("priority_content", [])
+                    else:
+                        repo_max_files = max_files
+                    
+                    # Fetch content for this repository
+                    try:
+                        file_content = self.repo_fetcher.fetch_relevant_content(
+                            owner, repo_name, branch, repo_progress_callback,
+                            _cancellation_event=_cancellation_event,
+                            max_files=repo_max_files,
+                            ai_instructions=ai_instructions
+                        )
+                        
+                        # Add AI guidance information if applicable
+                        if ai_instructions and file_content:
+                            for item in file_content:
+                                item["metadata"] = item.get("metadata", {})
+                                item["metadata"]["ai_guided"] = True
+                                item["metadata"]["extraction_goal"] = ai_instructions.get("extraction_goal", "general")
+                        
+                        # Add organization information to the metadata
+                        for item in file_content:
+                            item["metadata"] = item.get("metadata", {})
+                            item["metadata"]["organization"] = org_name
+                            item["metadata"]["repository"] = f"{owner}/{repo_name}"
+                        
+                        all_content.extend(file_content)
+                        repo_progress_callback(100, f"Completed {owner}/{repo_name}")
+                        
+                    except Exception as e:
+                        logger.error(f"Error processing repository {owner}/{repo_name}: {e}")
+                        repo_progress_callback(100, f"Error with {owner}/{repo_name}")
+                        # Continue with other repositories even if one fails
+                
+                # Complete progress
+                if progress_callback:
+                    progress_callback(100, f"Completed processing {len(org_repos)} repositories")
+                
+                return all_content
+            
+            # This is a single repository URL - process as before
             # Apply AI guidance if requested
             ai_instructions = None
             if use_ai_guidance and user_instructions:
@@ -273,7 +390,16 @@ class ContentFetcher:
                 
             return file_content
         except Exception as e:
-            logger.error(f"Failed to fetch repository {repo_url}: {e}")
+            # Check if this is an organization URL
+            is_org_url = bool(re.match(r"https?://github\.com/([^/]+)/?$", repo_url))
+            if is_org_url:
+                logger.error(f"Failed to fetch organization repositories from {repo_url}: {e}")
+                if progress_callback:
+                    progress_callback(100, f"Error: {str(e)}")
+            else:
+                logger.error(f"Failed to fetch repository {repo_url}: {e}")
+                if progress_callback:
+                    progress_callback(100, f"Error: {str(e)}")
             raise
 
     def _start_status_display(self, task_id=None):
@@ -354,6 +480,23 @@ class ContentFetcher:
             List of content files
         """
         if isinstance(repo_data, str):
+            # Check if this is an organization URL
+            org_match = re.match(r"https?://github\.com/([^/]+)/?$", repo_data)
+            if org_match:
+                # This is an organization URL - fetch all repositories
+                org_name = org_match.group(1)
+                logger.info(f"Detected GitHub organization URL: {repo_data}")
+                
+                # Fetch repositories from organization and process them
+                # This will be handled directly in fetch_single_repository
+                # We'll redirect there for organization processing
+                content_files = self.fetch_single_repository(
+                    repo_data,
+                    progress_callback=progress_callback,
+                    _cancellation_event=_cancellation_event
+                )
+                return content_files
+                
             # Handle single repository URL
             match = re.match(r"https?://github\.com/([^/]+)/([^/]+)", repo_data)
             if not match:

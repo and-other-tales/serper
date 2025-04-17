@@ -2,8 +2,11 @@ import re
 import os
 import time
 import logging
+import sys
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
+# Ensure local import takes precedence over any installed packages
+sys.path.insert(0, str(Path(__file__).parent.parent))
 from github.client import GitHubClient, GitHubAPIError
 from config.settings import (
     RELEVANT_FOLDERS,
@@ -190,6 +193,13 @@ class RepositoryFetcher:
 
     def fetch_single_repo(self, repo_url):
         """Fetch a single repository from its URL."""
+        # Check if this is an organization URL (no second path part)
+        org_match = re.match(r"https?://github\.com/([^/]+)/?$", repo_url)
+        if org_match:
+            # This is an organization URL
+            org_name = org_match.group(1)
+            raise ValueError(f"Organization URL detected: {repo_url}. Use fetch_organization_repos instead")
+            
         # Parse owner and repo from URL
         match = re.match(r"https?://github\.com/([^/]+)/([^/]+)", repo_url)
         if not match:

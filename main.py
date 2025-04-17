@@ -505,6 +505,10 @@ def run_cli():
                     continue
                 
                 try:
+                    # Use relative imports to avoid conflicts with PyGithub
+                    import sys
+                    from pathlib import Path
+                    sys.path.insert(0, str(Path(__file__).parent))
                     from github.content_fetcher import ContentFetcher
                     from huggingface.dataset_creator import DatasetCreator
                     
@@ -535,6 +539,13 @@ def run_cli():
                     # Fetch the repository content with AI guidance if requested
                     print("Fetching repository metadata and files...")
                     
+                    # Check if this is an organization URL
+                    import re
+                    is_org_url = bool(re.match(r"https?://github\.com/([^/]+)/?$", repo_url))
+                    if is_org_url:
+                        print(f"Detected GitHub organization URL: {repo_url}")
+                        print("Will fetch content from all repositories in the organization.")
+                    
                     if use_ai_guidance:
                         print("Using AI-guided repository fetching with your requirements...")
                         content_files = content_fetcher.fetch_single_repository(
@@ -550,7 +561,10 @@ def run_cli():
                         )
                     
                     if not content_files:
-                        print("No content found in repository or error occurred during fetch.")
+                        if is_org_url:
+                            print("No content found in any repository or error occurred during fetch.")
+                        else:
+                            print("No content found in repository or error occurred during fetch.")
                         continue
                     
                     print(f"\nCreating dataset '{dataset_name}' from {len(content_files)} files...")
