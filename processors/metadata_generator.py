@@ -18,9 +18,16 @@ class MetadataGenerator:
             # Check if this is a GitHub repository URL
             if "github.com" in source_info.lower():
                 source_type = "repository"
+                # Extract repository name from URL (last part after the last /)
+                import re
+                repo_match = re.search(r'github\.com/[^/]+/([^/]+)', source_info)
+                if repo_match:
+                    source_name = repo_match.group(1)
+                else:
+                    source_name = source_info
             else:
                 source_type = "url"
-            source_name = source_info
+                source_name = source_info
         else:
             # Check if this is a repository dictionary from GitHub API
             if "full_name" in source_info:
@@ -30,6 +37,13 @@ class MetadataGenerator:
                 source_type = "custom"
                 source_name = source_info.get("name", "unknown")
 
+        # Build the description with the appropriate prefix for GitHub repositories
+        description = (
+            f"Dataset created from GitHub repository {source_name}" 
+            if source_type == "repository" 
+            else f"Dataset created from {source_type} {source_name}"
+        )
+
         return {
             "created_at": timestamp,
             "source_type": source_type,
@@ -37,7 +51,7 @@ class MetadataGenerator:
             "file_count": file_count,
             "creator": "serper_dataset_creator",
             "version": "1.0",
-            "description": f"Dataset created from {source_type} {source_name}",
+            "description": description,
         }
 
     def generate_file_metadata(self, file_data):

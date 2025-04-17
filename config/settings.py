@@ -69,7 +69,7 @@ TEXT_FILE_EXTENSIONS = [
 # Hugging Face settings
 HF_DATASET_TEMPLATE = {
     "metadata": {
-        "creator": "serper_dataset_creator",
+        "creator": "github_hf_dataset_creator",
         "timestamp": "",
         "source": "",
         "version": "1.0",

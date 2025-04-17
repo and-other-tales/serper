@@ -22,13 +22,16 @@ logger = logging.getLogger(__name__)
 
 def run_cli():
     """Run the command-line interface."""
+    from huggingface.dataset_manager import DatasetManager
+    
     print("\n===== othertales Serper =====")
     print("CLI mode\n")
     print("Press Ctrl+C at any time to safely exit the application")
     
     # Initialize managers and clients
     credentials_manager = CredentialsManager()
-    dataset_manager = DatasetManager(credentials_manager=credentials_manager)
+    _, huggingface_token = credentials_manager.get_huggingface_credentials()
+    dataset_manager = DatasetManager(huggingface_token=huggingface_token, credentials_manager=credentials_manager) if huggingface_token else None
     task_tracker = TaskTracker()
     web_crawler = None
     dataset_creator = None
@@ -592,6 +595,11 @@ def run_cli():
                 
                 # Initialize dataset manager if needed
                 if dataset_manager is None:
+                    if not huggingface_token:
+                        print("\nError: Hugging Face token not found. Please set your credentials first.")
+                        continue
+                        
+                    from huggingface.dataset_manager import DatasetManager
                     dataset_manager = DatasetManager(huggingface_token=huggingface_token,
                                                    credentials_manager=credentials_manager)
                 
