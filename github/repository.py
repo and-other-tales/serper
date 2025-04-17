@@ -151,7 +151,23 @@ class DownloadQueue:
         self.processing_history = []
 
 class RepositoryFetcher:
-    """Handles fetching repositories and their contents."""
+    """Handles fetching repositories and their contents from GitHub.
+    
+    This class provides methods to interact with GitHub repositories,
+    fetch content, and manage the download process with proper rate limiting
+    and error handling. It supports fetching both single repositories and 
+    multiple repositories from an organization.
+    
+    Attributes:
+        client (GitHubClient): Client for GitHub API interaction
+        cache_dir (Path): Directory for caching downloaded files
+        download_queue (DownloadQueue): Queue for managing file downloads
+        file_patterns (list): Glob patterns to include when fetching files
+        exclude_patterns (list): Glob patterns to exclude when fetching files
+        include_directories (list): Directories to prioritize when fetching
+        exclude_directories (list): Directories to exclude when fetching
+        priority_content (list): Keywords or patterns to prioritize
+    """
 
     def __init__(self, github_token=None, client=None):
         """Initialize the repository fetcher.
@@ -159,6 +175,9 @@ class RepositoryFetcher:
         Args:
             github_token (str, optional): GitHub token for authentication
             client (GitHubClient, optional): Existing GitHub client to use
+            
+        Raises:
+            GitHubAPIError: If there's an error authenticating with GitHub
         """
         self.client = client if client is not None else GitHubClient(token=github_token)
         self.cache_dir = CACHE_DIR
@@ -170,6 +189,22 @@ class RepositoryFetcher:
         self.include_directories = [] # List of directories to prioritize
         self.exclude_directories = [] # List of directories to exclude
         self.priority_content = []    # Keywords or patterns to prioritize
+        
+        # Ensure cache directory exists with proper permissions
+        try:
+            if not self.cache_dir.exists():
+                self.cache_dir.mkdir(parents=True, exist_ok=True)
+                
+                # Try to set secure permissions on Unix systems
+                try:
+                    import stat
+                    import os
+                    os.chmod(self.cache_dir, stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+                except Exception as e:
+                    logger.warning(f"Could not set secure permissions on cache directory: {e}")
+        except Exception as e:
+            logger.error(f"Error creating cache directory: {e}")
+            # Continue anyway, we'll handle directory errors during operations
 
     def fetch_organization_repos(self, org_name):
         """Fetch all repositories for an organization."""

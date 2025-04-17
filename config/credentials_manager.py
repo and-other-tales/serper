@@ -326,9 +326,10 @@ class CredentialsManager:
             key = config.get("openai_key")
             logger.info("Using OpenAI key from config file")
         
-        # If still not found, check environment variable
+        # If still not found, check environment variable (try both casing styles)
         if not key:
-            key = self.env_vars.get("OPENAI_API_KEY")
+            # Try both lowercase and uppercase environment variable names
+            key = self.env_vars.get("openai_api_key") or self.env_vars.get("OPENAI_API_KEY")
             if key:
                 logger.info("Using OpenAI key from environment variables")
         
@@ -345,9 +346,34 @@ class CredentialsManager:
             return {"huggingface_username": ""}
 
     def _save_config(self, config):
-        """Save configuration to file."""
+        """Save configuration to file with basic security measures."""
         try:
+            # Create parent directory with secure permissions if needed
             self.CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-            self.CONFIG_FILE.write_text(json.dumps(config, indent=2))
+            
+            # Filter out sensitive data before logging
+            safe_config = config.copy()
+            sensitive_keys = [
+                "huggingface_token", "openapi_key", "openai_key",
+                "neo4j_password", "neo4j_uri", "neo4j_username"
+            ]
+            for key in sensitive_keys:
+                if key in safe_config:
+                    safe_config[key] = "*****"
+                    
+            logger.debug(f"Saving configuration: {json.dumps(safe_config)}")
+            
+            # Write config file with restricted permissions
+            with open(self.CONFIG_FILE, 'w') as f:
+                json.dump(config, f, indent=2)
+            
+            # Try to set file permissions to owner only (0600) on Unix systems
+            try:
+                import stat
+                os.chmod(self.CONFIG_FILE, stat.S_IRUSR | stat.S_IWUSR)
+                logger.debug(f"Set restricted permissions on {self.CONFIG_FILE}")
+            except Exception as e:
+                logger.warning(f"Could not set secure permissions on config file: {e}")
+                
         except Exception as e:
             logger.error(f"Failed to save config: {e}")

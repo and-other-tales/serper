@@ -3,9 +3,13 @@ import logging
 import requests
 import random
 import threading
+import sys
+from pathlib import Path
 from requests.exceptions import RequestException, ConnectionError, ReadTimeout
 from http.client import RemoteDisconnected
 from urllib3.exceptions import ProtocolError
+# Ensure local import takes precedence over any installed packages
+sys.path.insert(0, str(Path(__file__).parent.parent))
 from config.settings import (
     GITHUB_API_URL,
     GITHUB_MAX_RETRIES,
@@ -31,29 +35,45 @@ class RateLimitError(GitHubAPIError):
 class GitHubClient:
     """Client for interacting with GitHub API with improved rate limiting."""
 
-    # Class-level rate limiting
-    request_lock = threading.Lock()
-    last_request_time = 0
-    min_request_interval = 1.0  # Minimum time between requests
-    requests_per_hour = 5000  # GitHub's limit for authenticated users
-    current_requests = 0
-    hour_start_time = time.time()
+    # Class-level lock for thread-safe operation
+    _class_lock = threading.RLock()
+    
+    # Initialize class variables in a thread-safe way
+    @classmethod
+    def _initialize_class_vars(cls):
+        with cls._class_lock:
+            if not hasattr(cls, "_initialized"):
+                cls.last_request_time = 0
+                cls.min_request_interval = 1.0  # Minimum time between requests
+                cls.requests_per_hour = 5000  # GitHub's limit for authenticated users
+                cls.current_requests = 0
+                cls.hour_start_time = time.time()
+                cls._initialized = True
+    
+    # Instance-level lock for this specific client
+    # Class-level rate limiting with thread safety
 
     def __init__(self, token=None):
+        # Initialize class variables if not already done
+        self._initialize_class_vars()
+        
+        # Instance variables
         self.token = token
         self.headers = {"Accept": "application/vnd.github.v3+json"}
         if token:
             # GitHub API accepts both formats but "Bearer" is more modern and standard OAuth format
             self.headers["Authorization"] = f"Bearer {token}"
         self.session = requests.Session()
+        # Create an instance-level lock for this specific client
+        self.request_lock = threading.RLock()
 
     def get(self, endpoint, params=None):
         """Make a GET request to GitHub API with proper rate limiting."""
         url = f"{GITHUB_API_URL}/{endpoint.lstrip('/')}"
         retries = 0
 
-        # Check hourly rate limit
-        with GitHubClient.request_lock:
+        # Check hourly rate limit - use class-level lock for shared state
+        with GitHubClient._class_lock:
             current_time = time.time()
             elapsed_since_hour_start = current_time - GitHubClient.hour_start_time
 
@@ -78,20 +98,25 @@ class GitHubClient:
                     )
 
         while retries < GITHUB_MAX_RETRIES:
-            # Apply rate limiting between requests
-            with GitHubClient.request_lock:
+            # Apply rate limiting between requests - use instance lock for request timing
+            # and class lock for shared counters
+            with self.request_lock:
+                # First check/update instance-specific rate limit
                 current_time = time.time()
-                elapsed = current_time - GitHubClient.last_request_time
-                if elapsed < GitHubClient.min_request_interval:
-                    sleep_time = GitHubClient.min_request_interval - elapsed
-                    logger.debug(
-                        f"Rate limiting: waiting {sleep_time:.2f}s before next request"
-                    )
-                    time.sleep(sleep_time)
-
-                # Update last request time
-                GitHubClient.last_request_time = time.time()
-                GitHubClient.current_requests += 1
+                
+                # Now update shared class state with proper locking
+                with GitHubClient._class_lock:
+                    elapsed = current_time - GitHubClient.last_request_time
+                    if elapsed < GitHubClient.min_request_interval:
+                        sleep_time = GitHubClient.min_request_interval - elapsed
+                        logger.debug(
+                            f"Rate limiting: waiting {sleep_time:.2f}s before next request"
+                        )
+                        time.sleep(sleep_time)
+    
+                    # Update last request time
+                    GitHubClient.last_request_time = time.time()
+                    GitHubClient.current_requests += 1
 
             try:
                 response = self.session.get(
@@ -138,15 +163,26 @@ class GitHubClient:
                         )
                 else:
                     try:
-                        error_message = response.json().get("message", "Unknown error")
-                    except:
-                        error_message = response.text[:100]
-                    logger.error(
-                        f"GitHub API error: {response.status_code} - {error_message}"
-                    )
-                    raise GitHubAPIError(
-                        f"GitHub API error: {response.status_code} - {error_message}"
-                    )
+                        error_data = response.json()
+                        error_message = error_data.get("message", "Unknown error")
+                        # Get more detailed error information if available
+                        error_docs = error_data.get("documentation_url", "")
+                        errors_detail = error_data.get("errors", [])
+                        error_detail = ""
+                        if errors_detail:
+                            error_detail = f", details: {str(errors_detail)}"
+                        
+                        full_error = f"GitHub API error: {response.status_code} - {error_message}{error_detail}"
+                        if error_docs:
+                            full_error += f" (docs: {error_docs})"
+                            
+                        logger.error(full_error)
+                        raise GitHubAPIError(full_error)
+                    except ValueError:
+                        # Handle case when response is not valid JSON
+                        error_message = response.text[:200] if response.text else "No response body"
+                        logger.error(f"GitHub API error (non-JSON): {response.status_code} - {error_message}")
+                        raise GitHubAPIError(f"GitHub API error: {response.status_code} - {error_message}")
 
             except RequestException as e:
                 logger.error(f"Request error: {e}")

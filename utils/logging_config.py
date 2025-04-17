@@ -30,10 +30,27 @@ class RealTimeLogHandler(logging.Handler):
         self.tui_callback(log_entry)
 
 
-def setup_logging(tui_callback=None):
-    """Configure logging for the application."""
+def setup_logging(tui_callback=None, secure_logging=True):
+    """
+    Configure logging for the application.
+    
+    Args:
+        tui_callback: Optional callback for real-time logging to UI
+        secure_logging: If True, will redact sensitive information in logs
+        
+    Returns:
+        None
+    """
     # Ensure log directory exists
     Path(LOG_DIR).mkdir(parents=True, exist_ok=True)
+    
+    # Set secure permissions on log directory
+    try:
+        import stat
+        import os
+        os.chmod(LOG_DIR, stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+    except Exception as e:
+        print(f"Warning: Could not set secure permissions on log directory: {e}")
 
     # Create root logger
     root_logger = logging.getLogger()
@@ -48,6 +65,31 @@ def setup_logging(tui_callback=None):
     detailed_formatter = logging.Formatter(
         "%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s"
     )
+    
+    # Add filter to redact sensitive information if secure_logging is enabled
+    if secure_logging:
+        class SensitiveDataFilter(logging.Filter):
+            def __init__(self):
+                super().__init__()
+                self.patterns = [
+                    (r'token=[^&\s]+', 'token=***REDACTED***'),
+                    (r'password=[^&\s]+', 'password=***REDACTED***'),
+                    (r'key=[^&\s]+', 'key=***REDACTED***'),
+                    (r'Authorization: Bearer [^\s]+', 'Authorization: Bearer ***REDACTED***'),
+                    (r'api_key=[^&\s]+', 'api_key=***REDACTED***'),
+                    (r'\"password\": \"[^\"]+\"', '\"password\": \"***REDACTED***\"'),
+                    (r'\"token\": \"[^\"]+\"', '\"token\": \"***REDACTED***\"')
+                ]
+                
+            def filter(self, record):
+                if isinstance(record.msg, str):
+                    for pattern, replacement in self.patterns:
+                        import re
+                        record.msg = re.sub(pattern, replacement, record.msg)
+                return True
+                
+        sensitive_filter = SensitiveDataFilter()
+        root_logger.addFilter(sensitive_filter)
 
     # Create console handler with DEBUG level
     console_handler = logging.StreamHandler(sys.stdout)

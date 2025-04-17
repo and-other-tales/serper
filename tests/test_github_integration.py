@@ -1,6 +1,7 @@
 import unittest
 import os
 import sys
+import re
 import tempfile
 from unittest.mock import MagicMock, patch
 from pathlib import Path
@@ -15,6 +16,93 @@ from utils.llm_client import LLMClient, GitHubInstructionsSchema
 
 class TestGitHubIntegration(unittest.TestCase):
     """Test the GitHub integration functionality."""
+    
+class TestGitHubOrganizationIntegration(unittest.TestCase):
+    """Test GitHub organization URL handling"""
+    
+    @patch('github.client.GitHubClient')
+    def setUp(self, mock_client):
+        """Set up test fixtures for organization tests."""
+        self.mock_client = mock_client.return_value
+        self.content_fetcher = ContentFetcher(github_token="test_token")
+        self.content_fetcher.repo_fetcher.client = self.mock_client
+    
+    def test_detect_organization_url(self):
+        """Test that organization URLs are correctly detected"""
+        # Test organization URL regex pattern
+        org_pattern = r"https?://github\.com/([^/]+)/?$"
+        
+        # Should match organization URLs
+        self.assertTrue(bool(re.match(org_pattern, "https://github.com/langchain-ai/")))
+        self.assertTrue(bool(re.match(org_pattern, "https://github.com/langchain-ai")))
+        self.assertTrue(bool(re.match(org_pattern, "http://github.com/test-org")))
+        
+        # Should not match repository URLs
+        self.assertFalse(bool(re.match(org_pattern, "https://github.com/langchain-ai/langchain")))
+        self.assertFalse(bool(re.match(org_pattern, "https://github.com/owner/repo/tree/main")))
+    
+    @patch('github.content_fetcher.ContentFetcher.fetch_organization_repositories')
+    def test_fetch_single_repository_with_org_url(self, mock_fetch_org):
+        """Test that fetch_single_repository correctly handles organization URLs"""
+        # Setup mock
+        org_repos = [
+            {"name": "repo1", "owner": {"login": "test-org"}, "default_branch": "main"},
+            {"name": "repo2", "owner": {"login": "test-org"}, "default_branch": "main"}
+        ]
+        mock_fetch_org.return_value = org_repos
+        
+        # Mock repo_fetcher to avoid actual API calls
+        self.content_fetcher.repo_fetcher.fetch_relevant_content = MagicMock()
+        self.content_fetcher.repo_fetcher.fetch_relevant_content.side_effect = [
+            [{"name": "file1.md"}],  # First repo
+            [{"name": "file2.md"}]   # Second repo
+        ]
+        
+        # Call the method with an organization URL
+        result = self.content_fetcher.fetch_single_repository("https://github.com/test-org/")
+        
+        # Verify results
+        self.assertEqual(len(result), 2)  # Should have content from both repos
+        mock_fetch_org.assert_called_once_with("test-org", None)  # Should call fetch_organization_repositories
+        
+        # Check that fetch_relevant_content was called twice (once for each repo)
+        self.assertEqual(self.content_fetcher.repo_fetcher.fetch_relevant_content.call_count, 2)
+    
+    @patch('github.client.GitHubClient.get_organization_repos')
+    def test_fetch_organization_repositories(self, mock_get_org_repos):
+        """Test fetching repositories from an organization"""
+        # Setup mock
+        mock_get_org_repos.side_effect = [
+            # First page
+            [{"name": "repo1"}, {"name": "repo2"}],
+            # Second page (empty to end pagination)
+            []
+        ]
+        
+        # Call the method
+        repos = self.content_fetcher.fetch_organization_repositories("test-org")
+        
+        # Verify results
+        self.assertEqual(len(repos), 2)
+        self.assertEqual(repos[0]["name"], "repo1")
+        self.assertEqual(repos[1]["name"], "repo2")
+        self.assertEqual(mock_get_org_repos.call_count, 2)  # Called twice due to pagination
+    
+    @patch('github.client.GitHubClient.get_organization_repos')
+    def test_organization_error_handling(self, mock_get_org_repos):
+        """Test error handling when fetching organization repositories"""
+        # Setup mock to raise an exception
+        mock_get_org_repos.side_effect = GitHubAPIError("API rate limit exceeded")
+        
+        # Call the method with error callback
+        progress_callback = MagicMock()
+        
+        # Should raise the exception
+        with self.assertRaises(GitHubAPIError):
+            self.content_fetcher.fetch_organization_repositories("test-org", callback=progress_callback)
+        
+        # Verify callback was called with error
+        progress_callback.assert_called_with(0, "Error: API rate limit exceeded")
 
     def setUp(self):
         """Set up test fixtures."""

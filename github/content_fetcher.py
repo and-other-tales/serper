@@ -220,11 +220,33 @@ class ContentFetcher:
             
         Returns:
             Repository content
+            
+        Raises:
+            ValueError: If the repo_url is not a valid GitHub URL
+            GitHubAPIError: If there's an error communicating with GitHub API
+            RateLimitError: If GitHub API rate limit is exceeded
         """
+        # Validate inputs first
+        if not repo_url:
+            raise ValueError("Repository URL cannot be empty")
+        
+        if not isinstance(repo_url, str):
+            raise ValueError(f"Repository URL must be a string, got {type(repo_url).__name__}")
+            
+        if not repo_url.startswith(("http://github.com/", "https://github.com/")):
+            raise ValueError(f"Invalid GitHub URL: {repo_url}. Must start with http://github.com/ or https://github.com/")
+            
+        if max_files is not None and (not isinstance(max_files, int) or max_files <= 0):
+            raise ValueError(f"max_files must be a positive integer, got {max_files}")
+            
         try:
             # Check if this is an organization URL by examining the pattern
             is_org_url = False
             match = re.match(r"https?://github\.com/([^/]+)/?$", repo_url)
+            # Validate organization name if matched
+            if match and not re.match(r"^[\w.-]+$", match.group(1)):
+                raise ValueError(f"Invalid GitHub organization name in URL: {repo_url}")
+                
             if match:
                 # No second path segment - this is an organization URL
                 is_org_url = True
@@ -593,8 +615,21 @@ class ContentFetcher:
             
         Returns:
             List of content files
+            
+        Raises:
+            ValueError: If org_name is invalid
+            GitHubAPIError: If there's an error with the GitHub API
         """
+        # Validate input
+        if not org_name or not isinstance(org_name, str):
+            raise ValueError(f"Organization name must be a non-empty string, got: {org_name}")
+        
+        # Regular expression to validate organization name format
+        if not re.match(r'^[\w.-]+$', org_name):
+            raise ValueError(f"Invalid organization name format: {org_name}")
+            
         task_id = None
+        executor = None
         
         try:
             # Create task for tracking
@@ -699,25 +734,33 @@ class ContentFetcher:
                     batch = repos[i:i+batch_size]
                     logger.debug(f"Scanning batch {i//batch_size + 1}: {[r['name'] for r in batch]}")
                     
-                    # Use direct threading for better control
-                    executor = get_executor()
-                    futures = [executor.submit(scan_repository_structure, repo) for repo in batch]
+                    # Use direct threading for better control with proper resource management
+                    local_executor = get_executor()
+                    futures = []
                     
-                    # Collect results
-                    for future in futures:
-                        try:
-                            # Check for cancellation during future processing
-                            if _cancellation_event and _cancellation_event.is_set():
-                                executor.shutdown(wait=False)
-                                logger.info("Operation cancelled during repository scanning futures")
-                                self.task_tracker.cancel_task(task_id)
-                                return []
-                                
-                            result = future.result(timeout=300)  # 5-minute timeout
-                            if result:
-                                scan_results.append(result)
-                        except Exception as e:
-                            logger.error(f"Error in scan batch processing: {e}")
+                    try:
+                        # Submit all tasks
+                        futures = [local_executor.submit(scan_repository_structure, repo) for repo in batch]
+                        
+                        # Collect results
+                        for future in futures:
+                            try:
+                                # Check for cancellation during future processing
+                                if _cancellation_event and _cancellation_event.is_set():
+                                    logger.info("Operation cancelled during repository scanning futures")
+                                    self.task_tracker.cancel_task(task_id)
+                                    return []
+                                    
+                                result = future.result(timeout=300)  # 5-minute timeout
+                                if result:
+                                    scan_results.append(result)
+                            except Exception as e:
+                                logger.error(f"Error in scan batch processing: {e}")
+                    except Exception as e:
+                        logger.error(f"Error during executor processing: {e}")
+                        if _cancellation_event:
+                            _cancellation_event.set()
+                        raise
                     
                     # Update progress (10-20%)
                     if progress_callback:
@@ -802,36 +845,45 @@ class ContentFetcher:
                             if file_item:
                                 batch.append(file_item)
                                 
-                        # Download this batch
-                        with ThreadPoolExecutor(max_workers=3) as executor:
-                            futures = []
-                            for file_item in batch:
-                                futures.append(executor.submit(
-                                    self.repo_fetcher._download_single_file,
-                                    file_item["owner"],
-                                    file_item["repo"],
-                                    file_item["path"],
-                                    file_item["branch"],
-                                    file_item["local_path"]
-                                ))
+                        # Download this batch with proper resource management
+                        download_executor = None
+                        futures = []
+                        try:
+                            with ThreadPoolExecutor(max_workers=3) as download_executor:
+                                # Submit all download tasks first
+                                for file_item in batch:
+                                    futures.append(download_executor.submit(
+                                        self.repo_fetcher._download_single_file,
+                                        file_item["owner"],
+                                        file_item["repo"],
+                                        file_item["path"],
+                                        file_item["branch"],
+                                        file_item["local_path"]
+                                    ))
                                 
-                            # Process results
-                            for future in futures:
-                                # Check for cancellation during future processing
-                                if _cancellation_event and _cancellation_event.is_set():
-                                    executor.shutdown(wait=False)
-                                    logger.info("Operation cancelled during file download futures")
-                                    self.task_tracker.cancel_task(task_id)
-                                    return []
-                                    
-                                try:
-                                    result = future.result()
-                                    if result:
-                                        all_content.append(result)
-                                    download_queue.mark_processed()
-                                except Exception as e:
-                                    logger.error(f"Error downloading file: {e}")
-                                    download_queue.mark_processed()
+                                # Process results separately for better error handling
+                                for future in futures:
+                                    # Check for cancellation during future processing
+                                    if _cancellation_event and _cancellation_event.is_set():
+                                        logger.info("Operation cancelled during file download futures")
+                                        self.task_tracker.cancel_task(task_id)
+                                        return []
+                                        
+                                    try:
+                                        result = future.result(timeout=300)  # 5-minute timeout
+                                        if result:
+                                            all_content.append(result)
+                                        download_queue.mark_processed()
+                                    except Exception as e:
+                                        logger.error(f"Error downloading file: {e}")
+                                        download_queue.mark_processed()
+                        except Exception as e:
+                            logger.error(f"Error in download executor: {e}")
+                            if _cancellation_event:
+                                _cancellation_event.set()
+                            if download_executor:
+                                download_executor.shutdown(wait=False)
+                            raise
                         
                         # Update progress (20-90%)
                         progress_info = download_queue.get_progress()
