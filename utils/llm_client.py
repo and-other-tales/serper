@@ -78,8 +78,41 @@ class CrawlInstructionsSchema(BaseModel):
     )
 
 
+class GitHubInstructionsSchema(BaseModel):
+    """Schema for GitHub repository fetching instructions."""
+    
+    file_patterns: List[str] = Field(
+        default_factory=list,
+        description="File patterns to prioritize (e.g. '*.md', '*.py')"
+    )
+    exclude_patterns: List[str] = Field(
+        default_factory=list,
+        description="File patterns to exclude (e.g. 'test_*', '*.log')"
+    )
+    max_files: int = Field(
+        default=1000,
+        description="Maximum number of files to fetch"
+    )
+    include_directories: List[str] = Field(
+        default_factory=list,
+        description="Directories to prioritize for inclusion"
+    )
+    exclude_directories: List[str] = Field(
+        default_factory=list,
+        description="Directories to exclude completely"
+    )
+    extraction_goal: str = Field(
+        default="general",
+        description="Goal of extraction: 'documentation', 'code', 'data', or 'general'"
+    )
+    priority_content: List[str] = Field(
+        default_factory=list,
+        description="Keywords or patterns to prioritize when fetching repository content"
+    )
+
+
 class LLMClient:
-    """LLM client for generating web crawler instructions."""
+    """LLM client for generating instructions for web crawling and GitHub repository fetching."""
 
     def __init__(
         self, 
@@ -590,6 +623,278 @@ Please provide detailed instructions for my web crawler in JSON format. Include 
             logger.error(f"Error making API call to {self.provider}: {e}")
             return default_instructions
     
+    def _generate_github_instructions_anthropic(self, user_input: str, repo_url: str) -> Dict[str, Any]:
+        """
+        Generate GitHub repository instructions using Anthropic API directly.
+        
+        Args:
+            user_input: The user's description of what they want to extract
+            repo_url: The GitHub repository URL
+            
+        Returns:
+            Dict: Structured GitHub instructions
+        """
+        if not self.direct_client:
+            logger.error("Anthropic client not available")
+            return {}
+        
+        system_prompt = """You are an expert GitHub repository analyzer. 
+Your task is to analyze the user's intent for extracting data from a GitHub repository and provide specific instructions.
+Return your response as a JSON object with the following fields:
+- file_patterns (array of strings): File patterns to prioritize (e.g. '*.md', '*.py')
+- exclude_patterns (array of strings): File patterns to exclude (e.g. 'test_*', '*.log')
+- max_files (integer): Maximum number of files to fetch
+- include_directories (array of strings): Directories to prioritize for inclusion
+- exclude_directories (array of strings): Directories to exclude completely
+- extraction_goal (string: 'documentation', 'code', 'data', 'general'): The goal of extraction
+- priority_content (array of strings): Keywords or patterns to prioritize when fetching repository content"""
+        
+        user_message = f"""I want to extract data from this GitHub repository: {repo_url}
+
+I need: {user_input}
+
+Please provide detailed instructions for repository content extraction in JSON format."""
+        
+        try:
+            # Use tool calling for Claude
+            response = self.direct_client.messages.create(
+                model=self.anthropic_model,
+                messages=[
+                    {"role": "user", "content": user_message}
+                ],
+                system=system_prompt,
+                tools=[{
+                    "name": "github_instructions",
+                    "description": "Generate instructions for GitHub repository extraction",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "file_patterns": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "File patterns to prioritize (e.g. '*.md', '*.py')"
+                            },
+                            "exclude_patterns": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "File patterns to exclude (e.g. 'test_*', '*.log')"
+                            },
+                            "max_files": {
+                                "type": "integer",
+                                "description": "Maximum number of files to fetch"
+                            },
+                            "include_directories": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Directories to prioritize for inclusion"
+                            },
+                            "exclude_directories": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Directories to exclude completely"
+                            },
+                            "extraction_goal": {
+                                "type": "string",
+                                "description": "Goal of extraction: 'documentation', 'code', 'data', or 'general'"
+                            },
+                            "priority_content": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Keywords or patterns to prioritize when fetching repository content"
+                            }
+                        },
+                        "required": ["file_patterns", "extraction_goal"]
+                    }
+                }],
+                max_tokens=4096,
+                temperature=0.2
+            )
+            
+            # Check if tool call was used
+            for content_block in response.content:
+                if content_block.type == "tool_use":
+                    return content_block.input
+            
+            # If no tool call, try to extract JSON from text
+            text_content = response.content[0].text
+            try:
+                # Try to find JSON in the response
+                json_start = text_content.find('{')
+                json_end = text_content.rfind('}') + 1
+                if json_start >= 0 and json_end > json_start:
+                    json_str = text_content[json_start:json_end]
+                    return json.loads(json_str)
+                else:
+                    logger.warning("Couldn't find JSON in Anthropic response")
+                    return {}
+            except Exception as e:
+                logger.error(f"Error parsing JSON from Anthropic response: {e}")
+                return {}
+                
+        except Exception as e:
+            logger.error(f"Error calling Anthropic API for GitHub instructions: {e}")
+            return {}
+            
+    def _generate_github_instructions_openai(self, user_input: str, repo_url: str) -> Dict[str, Any]:
+        """
+        Generate GitHub repository instructions using OpenAI API.
+        
+        Args:
+            user_input: The user's description of what they want to extract
+            repo_url: The GitHub repository URL
+            
+        Returns:
+            Dict: Structured GitHub instructions
+        """
+        if not self.direct_client:
+            logger.error("OpenAI client not available")
+            return {}
+        
+        system_prompt = """You are an expert GitHub repository analyzer. 
+Your task is to analyze the user's intent for extracting data from a GitHub repository and provide specific instructions."""
+        
+        user_message = f"""I want to extract data from this GitHub repository: {repo_url}
+
+I need: {user_input}
+
+Please provide detailed instructions for repository content extraction in JSON format. Include the following fields:
+- file_patterns (array of strings): File patterns to prioritize (e.g. '*.md', '*.py')
+- exclude_patterns (array of strings): File patterns to exclude (e.g. 'test_*', '*.log')
+- max_files (integer): Maximum number of files to fetch
+- include_directories (array of strings): Directories to prioritize for inclusion
+- exclude_directories (array of strings): Directories to exclude completely
+- extraction_goal (string: 'documentation', 'code', 'data', 'general'): The goal of extraction
+- priority_content (array of strings): Keywords or patterns to prioritize when fetching repository content"""
+        
+        try:
+            # Call OpenAI with function calling
+            response = self.direct_client.chat.completions.create(
+                model=self.openai_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message}
+                ],
+                functions=[{
+                    "name": "github_instructions",
+                    "description": "Generate instructions for GitHub repository extraction",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "file_patterns": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "File patterns to prioritize (e.g. '*.md', '*.py')"
+                            },
+                            "exclude_patterns": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "File patterns to exclude (e.g. 'test_*', '*.log')"
+                            },
+                            "max_files": {
+                                "type": "integer",
+                                "description": "Maximum number of files to fetch"
+                            },
+                            "include_directories": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Directories to prioritize for inclusion"
+                            },
+                            "exclude_directories": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Directories to exclude completely"
+                            },
+                            "extraction_goal": {
+                                "type": "string",
+                                "description": "Goal of extraction: 'documentation', 'code', 'data', or 'general'"
+                            },
+                            "priority_content": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Keywords or patterns to prioritize when fetching repository content"
+                            }
+                        },
+                        "required": ["file_patterns", "extraction_goal"]
+                    }
+                }],
+                function_call={"name": "github_instructions"},
+                temperature=0.2
+            )
+            
+            # Extract and parse the function call
+            function_call = response.choices[0].message.function_call
+            if function_call and function_call.name == "github_instructions":
+                return json.loads(function_call.arguments)
+            
+            # If for some reason function calling didn't work, try to parse from message
+            message_content = response.choices[0].message.content
+            if message_content:
+                try:
+                    # Try to find JSON in the response
+                    json_start = message_content.find('{')
+                    json_end = message_content.rfind('}') + 1
+                    if json_start >= 0 and json_end > json_start:
+                        json_str = message_content[json_start:json_end]
+                        return json.loads(json_str)
+                except Exception as e:
+                    logger.error(f"Error parsing JSON from OpenAI response: {e}")
+            
+            return {}
+            
+        except Exception as e:
+            logger.error(f"Error calling OpenAI API for GitHub instructions: {e}")
+            return {}
+    
+    def generate_github_instructions(self, user_input: str, repo_url: str) -> Dict[str, Any]:
+        """
+        Generate GitHub repository instructions using the configured LLM provider.
+        
+        Args:
+            user_input: The user's description of what they want to extract
+            repo_url: The GitHub repository URL
+            
+        Returns:
+            Dict: Structured GitHub repository instructions
+        """
+        logger.info(f"Generating GitHub repository instructions using {self.provider}")
+        
+        # Default instructions if all methods fail
+        default_instructions = {
+            "file_patterns": ["*.md", "*.txt", "*.py", "*.js", "*.html", "*.css"],
+            "exclude_patterns": ["node_modules/*", "*.min.js", "*.min.css", "vendor/*"],
+            "max_files": 1000,
+            "include_directories": [],
+            "exclude_directories": [".git", "node_modules", "vendor", "dist", "build"],
+            "extraction_goal": "general",
+            "priority_content": []
+        }
+        
+        # Try different methods in order of preference
+        if self.provider == LLMProvider.ANTHROPIC:
+            # Try with direct Anthropic API
+            if ANTHROPIC_AVAILABLE and self.direct_client:
+                try:
+                    logger.debug("Trying direct Anthropic API for GitHub instructions")
+                    result = self._generate_github_instructions_anthropic(user_input, repo_url)
+                    if result:
+                        return result
+                except Exception as e:
+                    logger.warning(f"Error using direct Anthropic API for GitHub instructions: {e}")
+                
+        elif self.provider == LLMProvider.OPENAI:
+            # Try with direct OpenAI API
+            if OPENAI_AVAILABLE and self.direct_client:
+                try:
+                    logger.debug("Trying direct OpenAI API for GitHub instructions")
+                    result = self._generate_github_instructions_openai(user_input, repo_url)
+                    if result:
+                        return result
+                except Exception as e:
+                    logger.warning(f"Error using direct OpenAI API for GitHub instructions: {e}")
+        
+        logger.warning("Failed to generate GitHub instructions, using default")
+        return default_instructions
+        
     def generate_crawler_instructions(self, user_input: str, url: str) -> Dict[str, Any]:
         """
         Generate crawler instructions using the configured LLM provider.

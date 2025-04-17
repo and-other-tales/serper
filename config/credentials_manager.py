@@ -19,7 +19,6 @@ class CredentialsManager:
     """Manages secure storage and retrieval of API credentials and application settings."""
 
     SERVICE_NAME = "othertales_serper"
-    GITHUB_KEY = "github_token"
     HUGGINGFACE_KEY = "huggingface_token"
     OPENAPI_KEY = "openapi_key"
     OPENAI_KEY = "openai_key"  # Added for OpenAI API
@@ -43,7 +42,6 @@ class CredentialsManager:
         """Ensure the configuration file exists with default values."""
         if not self.CONFIG_FILE.exists():
             default_config = {
-                "github_username": "", 
                 "huggingface_username": "",
                 "server_port": self.DEFAULT_SERVER_PORT,
                 "temp_dir": self.DEFAULT_TEMP_DIR
@@ -58,14 +56,7 @@ class CredentialsManager:
             config = self._load_config()
             updated = False
 
-            # If GitHub token exists in env but no username is configured
-            if self.env_vars.get("github_token") and not config.get("github_username"):
-                github_username = self.env_vars.get("github_username")
-                if github_username:
-                    config["github_username"] = github_username
-                    updated = True
-
-            # Similarly for HuggingFace
+            # HuggingFace username extraction
             if self.env_vars.get("huggingface_token") and not config.get(
                 "huggingface_username"
             ):
@@ -79,31 +70,6 @@ class CredentialsManager:
         except Exception as e:
             logger.error(f"Error extracting usernames from env: {e}")
 
-    def save_github_credentials(self, username, token):
-        """Save GitHub credentials."""
-        try:
-            config = self._load_config()
-            config["github_username"] = username
-            
-            # Save token in config file if keyring not available
-            if not HAS_KEYRING:
-                config["github_token"] = token
-                logger.warning("Keyring not available, storing token in config file (less secure)")
-            
-            self._save_config(config)
-            
-            # Try to use keyring if available
-            if HAS_KEYRING:
-                try:
-                    keyring.set_password(self.SERVICE_NAME, self.GITHUB_KEY, token)
-                except Exception as e:
-                    logger.warning(f"Keyring failed, storing token in config file: {e}")
-                    config["github_token"] = token
-                    self._save_config(config)
-                    
-            logger.info(f"Saved GitHub credentials for user {username}")
-        except Exception as e:
-            logger.error(f"Failed to save GitHub credentials: {e}")
 
     def save_huggingface_credentials(self, username, token):
         """Save Hugging Face credentials."""
@@ -131,30 +97,6 @@ class CredentialsManager:
         except Exception as e:
             logger.error(f"Failed to save Hugging Face credentials: {e}")
 
-    def get_github_credentials(self):
-        """Get GitHub credentials with environment variable fallback."""
-        config = self._load_config()
-        username = config.get("github_username", "")
-        token = None
-
-        # Try to get token from keyring if available
-        if HAS_KEYRING:
-            try:
-                token = keyring.get_password(self.SERVICE_NAME, self.GITHUB_KEY)
-            except Exception as e:
-                logger.warning(f"Error accessing keyring: {e}")
-
-        # If not found in keyring, try config file
-        if not token and "github_token" in config:
-            token = config.get("github_token")
-            logger.info("Using GitHub token from config file")
-
-        # If still not found, check environment variable
-        if not token and self.env_vars.get("github_token"):
-            token = self.env_vars.get("github_token")
-            logger.info("Using GitHub token from environment variables")
-
-        return username, token
 
     def get_huggingface_credentials(self):
         """Get Hugging Face credentials with environment variable fallback."""
@@ -397,10 +339,10 @@ class CredentialsManager:
         try:
             if self.CONFIG_FILE.exists():
                 return json.loads(self.CONFIG_FILE.read_text())
-            return {"github_username": "", "huggingface_username": ""}
+            return {"huggingface_username": ""}
         except Exception as e:
             logger.error(f"Failed to load config: {e}")
-            return {"github_username": "", "huggingface_username": ""}
+            return {"huggingface_username": ""}
 
     def _save_config(self, config):
         """Save configuration to file."""

@@ -17,7 +17,13 @@ for directory in [APP_DIR, CACHE_DIR, LOG_DIR, CONFIG_DIR, TEMP_DIR]:
 SERVER_HOST = "0.0.0.0"
 SERVER_PORT = 8080
 
-# GitHub settings
+# API connection settings
+API_MAX_RETRIES = 3
+API_TIMEOUT = 30
+DEFAULT_BRANCH = "main"
+DOWNLOAD_RETRIES = 5  # Specific retry count for file downloads
+
+# GitHub API settings
 GITHUB_API_URL = "https://api.github.com"
 GITHUB_MAX_RETRIES = 3
 GITHUB_TIMEOUT = 30
@@ -63,7 +69,7 @@ TEXT_FILE_EXTENSIONS = [
 # Hugging Face settings
 HF_DATASET_TEMPLATE = {
     "metadata": {
-        "creator": "github_hf_dataset_creator",
+        "creator": "serper_dataset_creator",
         "timestamp": "",
         "source": "",
         "version": "1.0",

@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 class FileProcessor:
-    """Process files from GitHub repositories."""
+    """Process files from various sources."""
 
     def process_file(self, file_data: Dict[str, Any]) -> Dict[str, Any]:
         """

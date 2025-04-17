@@ -2,11 +2,16 @@ import logging
 import subprocess
 import threading
 import time
-from fastapi import FastAPI, HTTPException, Depends, Header
+import os
+import ssl
+from fastapi import FastAPI, HTTPException, Depends, Header, Request, Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, Field
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Any, Union, Callable
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -23,6 +28,69 @@ class ServerStatus:
 # Create a global status object
 server_status = ServerStatus()
 
+# Security headers middleware class
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Middleware to add security headers to all responses."""
+    
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        response = await call_next(request)
+        
+        # Add security headers
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["Content-Security-Policy"] = "default-src 'self'; frame-ancestors 'none'"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Server"] = "Serper API"
+        
+        return response
+
+# Rate limiting middleware class
+class RateLimitingMiddleware(BaseHTTPMiddleware):
+    """Middleware to implement basic rate limiting."""
+    
+    def __init__(self, app, max_requests: int = 100, window_seconds: int = 60):
+        super().__init__(app)
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self.request_tracker = {}  # Store IP address -> list of request timestamps
+    
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        # Get client IP
+        client_ip = request.client.host if request.client else "unknown"
+        
+        # Check if client is in tracker
+        current_time = time.time()
+        if client_ip not in self.request_tracker:
+            self.request_tracker[client_ip] = []
+        
+        # Clean up old requests
+        self.request_tracker[client_ip] = [
+            timestamp for timestamp in self.request_tracker[client_ip]
+            if current_time - timestamp < self.window_seconds
+        ]
+        
+        # Check if client exceeded rate limit
+        if len(self.request_tracker[client_ip]) >= self.max_requests:
+            logger.warning(f"Rate limit exceeded for client {client_ip}")
+            return Response(
+                content="Rate limit exceeded. Please try again later.",
+                status_code=429,
+                media_type="text/plain"
+            )
+        
+        # Add current request to tracker
+        self.request_tracker[client_ip].append(current_time)
+        
+        # Add rate limiting headers
+        response = await call_next(request)
+        response.headers["X-RateLimit-Limit"] = str(self.max_requests)
+        response.headers["X-RateLimit-Remaining"] = str(self.max_requests - len(self.request_tracker[client_ip]))
+        response.headers["X-RateLimit-Reset"] = str(int(current_time + self.window_seconds))
+        
+        return response
+
 # Initialize FastAPI app
 app = FastAPI(
     title="othertales Serper API",
@@ -30,8 +98,14 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# Add security middlewares
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RateLimitingMiddleware, max_requests=100, window_seconds=60)
+app.add_middleware(GZipMiddleware, minimum_size=1000)  # Compress responses over 1KB
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"])  # Can be restricted in production
+
 # Add CORS middleware for LLM tool compatibility
-origins = ["*"]
+origins = ["*"]  # In production, restrict to specific domains
 
 app.add_middleware(
     CORSMiddleware,
@@ -181,31 +255,171 @@ async def status():
         "version": app.version
     }
 
+@app.get("/health", response_model=dict, summary="Health Check", tags=["Monitoring"])
+async def health_check():
+    """
+    Health check endpoint for container orchestration and monitoring.
+    
+    This endpoint checks the health of all critical system components and dependencies:
+    - API server status
+    - Database connections (Neo4j)
+    - External API access (GitHub, HuggingFace)
+    - File system access
+    
+    Returns:
+        dict: Health status information including component status and system metrics
+    """
+    health_status = {
+        "status": "healthy",
+        "timestamp": time.time(),
+        "version": app.version,
+        "components": {
+            "api_server": {"status": "up"},
+            "file_system": {"status": "unknown"},
+            "neo4j": {"status": "unknown"},
+            "huggingface_api": {"status": "unknown"},
+            "github_api": {"status": "unknown"},
+        },
+        "system": {
+            "memory_usage": 0,
+            "cpu_load": 0,
+            "uptime_seconds": 0
+        }
+    }
+    
+    # Check file system access
+    try:
+        # Test file system by writing and reading a temporary file
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=True) as tmp:
+            tmp.write(b"test")
+            tmp.flush()
+            with open(tmp.name, 'rb') as f:
+                if f.read() == b"test":
+                    health_status["components"]["file_system"]["status"] = "up"
+                else:
+                    health_status["components"]["file_system"]["status"] = "degraded"
+    except Exception as e:
+        health_status["components"]["file_system"] = {
+            "status": "down",
+            "error": str(e)
+        }
+        health_status["status"] = "degraded"
+    
+    # Check Neo4j connection if available
+    try:
+        from knowledge_graph.graph_store import GraphStore
+        graph_store = GraphStore()
+        if graph_store.test_connection():
+            health_status["components"]["neo4j"]["status"] = "up"
+        else:
+            health_status["components"]["neo4j"]["status"] = "down"
+            health_status["status"] = "degraded"
+    except Exception as e:
+        health_status["components"]["neo4j"] = {
+            "status": "down",
+            "error": str(e)
+        }
+        health_status["status"] = "degraded"
+    
+    # Check Hugging Face API access
+    try:
+        from config.credentials_manager import CredentialsManager
+        credentials_manager = CredentialsManager()
+        _, huggingface_token = credentials_manager.get_huggingface_credentials()
+        
+        if huggingface_token:
+            from huggingface_hub import HfApi
+            api = HfApi(token=huggingface_token)
+            # Just make a simple API call to test access
+            _ = api.whoami()
+            health_status["components"]["huggingface_api"]["status"] = "up"
+        else:
+            health_status["components"]["huggingface_api"]["status"] = "unconfigured"
+    except Exception as e:
+        health_status["components"]["huggingface_api"] = {
+            "status": "down",
+            "error": str(e)
+        }
+        health_status["status"] = "degraded"
+    
+    # Check GitHub API access
+    try:
+        from github.client import GitHubClient
+        client = GitHubClient()
+        # Just make a simple API call to test access
+        client.verify_credentials()
+        health_status["components"]["github_api"]["status"] = "up"
+    except Exception as e:
+        health_status["components"]["github_api"] = {
+            "status": "down",
+            "error": str(e)
+        }
+        # This is not critical for most operations, so we don't degrade overall status
+    
+    # Get system metrics if psutil is available
+    try:
+        import psutil
+        import datetime
+        
+        # Memory usage
+        memory = psutil.virtual_memory()
+        health_status["system"]["memory_usage"] = {
+            "total_mb": memory.total / (1024 * 1024),
+            "used_mb": memory.used / (1024 * 1024),
+            "percent": memory.percent
+        }
+        
+        # CPU load
+        health_status["system"]["cpu_load"] = {
+            "percent": psutil.cpu_percent(interval=0.1),
+            "cores": psutil.cpu_count()
+        }
+        
+        # Uptime
+        boot_time = datetime.datetime.fromtimestamp(psutil.boot_time())
+        uptime = datetime.datetime.now() - boot_time
+        health_status["system"]["uptime_seconds"] = uptime.total_seconds()
+        
+    except ImportError:
+        # psutil not available, skip system metrics
+        pass
+    
+    # Return 503 Service Unavailable if status is not healthy
+    if health_status["status"] != "healthy":
+        from fastapi import status
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service is degraded or unhealthy"
+        )
+    
+    return health_status
+
 
 @app.post("/generate", response_model=ApiResponse, summary="Generate Dataset")
 async def generate_dataset(
     request: GenerateDatasetRequest, api_key: str = Depends(verify_api_key)
 ):
     """
-    Create and publish a new dataset on Hugging Face from GitHub repository or organization content.
+    Create and publish a new dataset on Hugging Face from  repository or organization content.
     
-    This endpoint fetches code files from the specified GitHub source, processes them,
+    This endpoint fetches code files from the specified  source, processes them,
     and publishes a structured dataset to Hugging Face with appropriate metadata.
     """
     try:
         # Import necessary components
-        from github.content_fetcher import ContentFetcher
+        from .content_fetcher import ContentFetcher
         from huggingface.dataset_creator import DatasetCreator
         from config.credentials_manager import CredentialsManager
 
         credentials_manager = CredentialsManager()
 
         # Get credentials
-        github_username, github_token = credentials_manager.get_github_credentials()
-        if not github_token:
+        _username, _token = credentials_manager.get__credentials()
+        if not _token:
             return ApiResponse(
                 success=False,
-                message="GitHub token not found. Please configure credentials first.",
+                message=" token not found. Please configure credentials first.",
                 data=None,
             )
 
@@ -217,7 +431,7 @@ async def generate_dataset(
                 data=None,
             )
 
-        content_fetcher = ContentFetcher(github_token=github_token)
+        content_fetcher = ContentFetcher(_token=_token)
         dataset_creator = DatasetCreator(huggingface_token=huggingface_token)
 
         # Process by source type
@@ -409,24 +623,77 @@ def set_api_key(key):
     API_KEY = key
 
 
-def start_server(api_key, host="0.0.0.0", port=8080):
-    """Start the FastAPI server using Uvicorn"""
+def start_server(api_key, host="0.0.0.0", port=8080, use_https=False, cert_file=None, key_file=None):
+    """
+    Start the FastAPI server using Uvicorn with optional HTTPS support.
+    
+    Args:
+        api_key: API key for authentication
+        host: Host to bind the server to
+        port: Port to bind the server to
+        use_https: Whether to use HTTPS
+        cert_file: Path to SSL certificate file (required if use_https is True)
+        key_file: Path to SSL key file (required if use_https is True)
+        
+    Returns:
+        dict: Server status information or False if server couldn't be started
+    """
     set_api_key(api_key)
+    
+    # Check if HTTPS parameters are valid
+    if use_https and (not cert_file or not key_file):
+        logger.error("HTTPS requested but certificate or key file not provided")
+        return False
+    
+    # If HTTPS is requested, check that certificate and key files exist
+    if use_https:
+        if not os.path.exists(cert_file):
+            logger.error(f"SSL certificate file not found: {cert_file}")
+            return False
+        if not os.path.exists(key_file):
+            logger.error(f"SSL key file not found: {key_file}")
+            return False
 
     def run_server():
         import uvicorn
+        
         server_status.running = True
         server_status.host = host
         server_status.port = port
-        logger.info(f"Starting OpenAPI FastAPI server on {host}:{port}")
-        logger.info(f"OpenAPI Schema available at: http://{host}:{port}/openapi.json")
-        logger.info(f"API Documentation available at: http://{host}:{port}/docs")
-        uvicorn.run(
-            app, 
-            host=host, 
-            port=port, 
-            log_level="info"
-        )
+        
+        if use_https:
+            # Configure SSL context
+            ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+            ssl_context.load_cert_chain(cert_file, key_file)
+            
+            # Log HTTPS server details
+            logger.info(f"Starting HTTPS FastAPI server on {host}:{port}")
+            logger.info(f"OpenAPI Schema available at: https://{host}:{port}/openapi.json")
+            logger.info(f"API Documentation available at: https://{host}:{port}/docs")
+            
+            # Run with SSL context
+            uvicorn.run(
+                app, 
+                host=host, 
+                port=port, 
+                log_level="info",
+                ssl_certfile=cert_file,
+                ssl_keyfile=key_file
+            )
+        else:
+            # Log HTTP server details
+            logger.info(f"Starting HTTP FastAPI server on {host}:{port}")
+            logger.info(f"OpenAPI Schema available at: http://{host}:{port}/openapi.json")
+            logger.info(f"API Documentation available at: http://{host}:{port}/docs")
+            logger.warning("Running in HTTP mode. Consider using HTTPS for production deployments.")
+            
+            # Run without SSL
+            uvicorn.run(
+                app, 
+                host=host, 
+                port=port, 
+                log_level="info"
+            )
     
     if server_status.running:
         logger.warning("Server is already running")
@@ -440,12 +707,17 @@ def start_server(api_key, host="0.0.0.0", port=8080):
     time.sleep(1)
     logger.info("FastAPI server started successfully")
     
+    # Protocol for URLs depends on whether we're using HTTPS
+    protocol = "https" if use_https else "http"
+    
     return {
         "status": "running",
         "host": host,
         "port": port,
-        "api_docs_url": f"http://{host}:{port}/docs",
-        "openapi_url": f"http://{host}:{port}/openapi.json"
+        "protocol": protocol,
+        "api_docs_url": f"{protocol}://{host}:{port}/docs",
+        "openapi_url": f"{protocol}://{host}:{port}/openapi.json",
+        "using_https": use_https
     }
 
 
@@ -465,12 +737,31 @@ def get_server_info():
     host = server_status.host
     port = server_status.port
     
+    # Detect whether we're using HTTPS by checking for SSL context in Uvicorn
+    using_https = False
+    try:
+        import inspect
+        import uvicorn
+        if server_status.server_thread and server_status.running:
+            frames = inspect.stack()
+            for frame in frames:
+                if 'ssl_certfile' in frame.frame.f_locals:
+                    using_https = True
+                    break
+    except Exception:
+        pass
+    
+    # Use appropriate protocol
+    protocol = "https" if using_https else "http"
+    
     return {
         "status": "running" if server_status.running else "stopped",
         "host": host,
         "port": port,
-        "api_docs_url": f"http://{host}:{port}/docs" if server_status.running else None,
-        "openapi_url": f"http://{host}:{port}/openapi.json" if server_status.running else None
+        "protocol": protocol,
+        "using_https": using_https,
+        "api_docs_url": f"{protocol}://{host}:{port}/docs" if server_status.running else None,
+        "openapi_url": f"{protocol}://{host}:{port}/openapi.json" if server_status.running else None
     }
 
 

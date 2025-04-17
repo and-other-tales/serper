@@ -15,26 +15,29 @@ class MetadataGenerator:
         timestamp = datetime.now().isoformat()
 
         if isinstance(source_info, str):
-            source_type = (
-                "repository" if "github.com" in source_info else "organization"
-            )
-            source_name = (
-                source_info.split("/")[-1]
-                if source_type == "repository"
-                else source_info
-            )
+            # Check if this is a GitHub repository URL
+            if "github.com" in source_info.lower():
+                source_type = "repository"
+            else:
+                source_type = "url"
+            source_name = source_info
         else:
-            source_type = "repository"
-            source_name = source_info.get("full_name", "unknown")
+            # Check if this is a repository dictionary from GitHub API
+            if "full_name" in source_info:
+                source_type = "repository"
+                source_name = source_info.get("full_name", "unknown")
+            else:
+                source_type = "custom"
+                source_name = source_info.get("name", "unknown")
 
         return {
             "created_at": timestamp,
             "source_type": source_type,
             "source_name": source_name,
             "file_count": file_count,
-            "creator": "github_hf_dataset_creator",
+            "creator": "serper_dataset_creator",
             "version": "1.0",
-            "description": f"Dataset created from GitHub {source_type} {source_name}",
+            "description": f"Dataset created from {source_type} {source_name}",
         }
 
     def generate_file_metadata(self, file_data):
