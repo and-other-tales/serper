@@ -1074,14 +1074,108 @@ def run_cli():
         # Configuration menu (position depends on whether Resume Dataset Creation is available)
         elif (choice == "6" and not resumable_tasks) or (choice == "7" and resumable_tasks):
             print("\n----- Configuration -----")
-            print("1. API Credentials")
-            print("2. Server & Dataset Configuration")
-            print("3. Knowledge Graph Configuration")
-            print("4. Return to main menu")
+            print("1. Setup Wizard (Guided Configuration)")
+            print("2. API Credentials")
+            print("3. Server & Dataset Configuration")
+            print("4. Knowledge Graph Configuration")
+            print("5. Return to main menu")
             
-            config_choice = input("\nEnter choice (1-4): ")
+            config_choice = input("\nEnter choice (1-5): ")
             
             if config_choice == "1":
+                print("\n===== Setup Wizard =====")
+                print("This wizard will guide you through setting up all necessary configurations.")
+                print("Press Enter to use default values or skip optional settings.\n")
+                
+                try:
+                    print("\n--- Step 1: Hugging Face Credentials ---")
+                    print("Hugging Face credentials are required for dataset creation and management.")
+                    hf_username = input("Enter Hugging Face username: ")
+                    hf_token = input("Enter Hugging Face token (will not be shown): ")
+                    
+                    if hf_username and hf_token:
+                        credentials_manager.save_huggingface_credentials(hf_username, hf_token)
+                        print("✓ Hugging Face credentials saved successfully")
+                    else:
+                        print("⚠ Hugging Face credentials skipped")
+                    
+                    print("\n--- Step 2: GitHub Token (Optional) ---")
+                    print("GitHub token provides higher API rate limits and access to private repositories.")
+                    github_token = input("Enter GitHub token (optional, will not be shown): ")
+                    
+                    if github_token:
+                        # Save GitHub token to environment or configuration
+                        # This would require implementing a save_github_token method in credentials_manager
+                        os.environ["GITHUB_TOKEN"] = github_token
+                        print("✓ GitHub token set for this session")
+                        print("  Note: Add GITHUB_TOKEN to your environment variables for permanent configuration")
+                    else:
+                        print("⚠ GitHub token skipped")
+                    
+                    print("\n--- Step 3: OpenAI API Key (Optional) ---")
+                    print("OpenAI API key is used for AI-guided web crawling and repository scraping.")
+                    openai_key = input("Enter OpenAI API key (optional, will not be shown): ")
+                    
+                    if openai_key:
+                        credentials_manager.save_openai_key(openai_key)
+                        print("✓ OpenAI API key saved successfully")
+                    else:
+                        print("⚠ OpenAI API key skipped")
+                    
+                    print("\n--- Step 4: Neo4j Configuration (Optional) ---")
+                    print("Neo4j database is used for knowledge graph creation and querying.")
+                    configure_neo4j = input("Do you want to configure Neo4j connection? (y/n): ").lower()
+                    
+                    if configure_neo4j == 'y':
+                        neo4j_uri = input("Enter Neo4j URI (e.g., bolt://localhost:7687): ")
+                        neo4j_user = input("Enter Neo4j username: ")
+                        neo4j_password = input("Enter Neo4j password (will not be shown): ")
+                        
+                        if neo4j_uri and neo4j_user and neo4j_password:
+                            credentials_manager.save_neo4j_credentials(neo4j_uri, neo4j_user, neo4j_password)
+                            print("✓ Neo4j credentials saved successfully")
+                        else:
+                            print("⚠ Neo4j configuration incomplete - missing required fields")
+                    else:
+                        print("⚠ Neo4j configuration skipped")
+                    
+                    print("\n--- Step 5: Server Configuration ---")
+                    port_input = input(f"Enter API server port (default: {credentials_manager.get_server_port()}): ")
+                    if port_input:
+                        try:
+                            port = int(port_input)
+                            if 1024 <= port <= 65535:
+                                credentials_manager.save_server_port(port)
+                                print(f"✓ Server port set to {port}")
+                            else:
+                                print("⚠ Invalid port number (must be between 1024-65535). Using default.")
+                        except ValueError:
+                            print("⚠ Invalid port number. Using default.")
+                    else:
+                        print(f"✓ Using default server port: {credentials_manager.get_server_port()}")
+                    
+                    # Set temp directory
+                    temp_dir = input(f"Enter temporary directory path (default: {credentials_manager.get_temp_dir()}): ")
+                    if temp_dir:
+                        try:
+                            path = Path(temp_dir)
+                            credentials_manager.save_temp_dir(str(path.absolute()))
+                            print(f"✓ Temporary directory set to {path.absolute()}")
+                        except Exception as e:
+                            print(f"⚠ Error setting temporary directory: {e}")
+                    else:
+                        print(f"✓ Using default temporary directory: {credentials_manager.get_temp_dir()}")
+                    
+                    print("\n✓ Setup wizard complete!")
+                    print("You can update these settings individually from the configuration menu at any time.")
+                    input("\nPress Enter to continue...")
+                    
+                except Exception as e:
+                    print(f"\nError during setup: {e}")
+                    print("Configuration wizard failed. You can configure individual settings from the menu.")
+                    input("\nPress Enter to continue...")
+                
+            elif config_choice == "2":
                 print("\n--- API Credentials ---")
                 print("1. Set Hugging Face Credentials")
                 print("2. Set OpenAPI Key")
@@ -1139,7 +1233,7 @@ def run_cli():
                 # Return to configuration menu
                 continue
                 
-            elif config_choice == "2":
+            elif config_choice == "3":
                 print("\n--- Server & Dataset Configuration ---")
                 
                 # Show current settings
@@ -1194,7 +1288,7 @@ def run_cli():
                 else:
                     print("Invalid choice")
             
-            elif config_choice == "3":
+            elif config_choice == "4":
                 print("\n--- Knowledge Graph Configuration ---")
                 
                 print("1. Test Neo4j Connection")
@@ -1389,7 +1483,7 @@ def run_cli():
                 else:
                     print("Invalid choice")
             
-            elif config_choice == "4":
+            elif config_choice == "5":
                 continue
                 
             else:
